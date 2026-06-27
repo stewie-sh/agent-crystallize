@@ -45,7 +45,8 @@ agent-crystallize now \
   --finding "Replay coverage is the main remaining risk." \
   --open-loop "Run webhook replay test before handoff." \
   --test "npm test passed." \
-  --next-action "Run replay test and update the session crystal."
+  --next-action "Run replay test and update the session crystal." \
+  --memory-candidate "Replay coverage is a durable release-quality signal."
 ```
 
 This includes up to five recent checkpoint files as provenance anchors in the
@@ -63,7 +64,8 @@ agent-crystallize checkpoint \
   --finding "Fixture coverage caught one duplicate-row edge case." \
   --open-loop "Replay production-like webhook payloads." \
   --test "npm test passed." \
-  --next-action "Run webhook replay test."
+  --next-action "Run webhook replay test." \
+  --memory-candidate "Webhook replay should be part of future handoff checks."
 ```
 
 Available structured flags:
@@ -74,6 +76,7 @@ Available structured flags:
 - `--test`
 - `--next-action`
 - `--evidence`
+- `--memory-candidate`
 
 ## Validate Local Crystals
 
@@ -95,6 +98,7 @@ Validation checks for:
 - key header fields;
 - empty or TODO-only current focus;
 - TODO-heavy decision/finding/open-loop sections;
+- TODO-heavy memory-candidate sections;
 - resume prompts that do not point back to the artifact.
 
 ## Suggested Cadence

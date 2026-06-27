@@ -13,7 +13,8 @@ agent-crystallize now \
   --open-loop "Run production-like webhook replay test." \
   --test "npm test passed." \
   --next-action "Run replay test and update the crystal if behavior changes." \
-  --evidence "git commit abc123"
+  --evidence "git commit abc123" \
+  --memory-candidate "Strict parser behavior should be reused in future callback work."
 ```
 
 Then validate:

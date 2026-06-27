@@ -187,6 +187,8 @@ function validateCrystalFile(repo: string, absolutePath: string): ValidationResu
     const body = extractSection(markdown, section) ?? "";
     if (isTodoOnly(body)) warnings.push(`${section} is TODO-only`);
   }
+  const memoryCandidates = extractSection(markdown, "Memory Candidates") ?? "";
+  if (isTodoOnly(memoryCandidates)) warnings.push("Memory Candidates is TODO-only");
 
   const resumePrompt = extractSection(markdown, "Resume Prompt") ?? "";
   if (!resumePrompt.includes(path) && !resumePrompt.includes(basename(path))) {
@@ -225,6 +227,7 @@ interface StructuredFields {
   tests: string[];
   nextActions: string[];
   evidence: string[];
+  memoryCandidates: string[];
 }
 
 function collectGitContext(repo: string): GitContext {
@@ -435,7 +438,7 @@ ${renderBullets(input.structured.openLoops, "TODO: Record blockers, questions, a
 
 ## Memory Candidates
 
-- TODO: Record candidate preferences, principles, workflows, findings, or project facts. Do not treat candidates as approved truth.
+${renderBullets(input.structured.memoryCandidates, "No explicit memory candidates captured. Do not treat absent candidates as proof there was nothing to learn.")}
 
 ## Next Actions
 
@@ -498,6 +501,7 @@ function takeStructuredFields(values: string[]): StructuredFields {
     tests: takeRepeatedFlag(values, "--test"),
     nextActions: takeRepeatedFlag(values, "--next-action"),
     evidence: takeRepeatedFlag(values, "--evidence"),
+    memoryCandidates: takeRepeatedFlag(values, "--memory-candidate"),
   };
 }
 
@@ -581,6 +585,7 @@ Options:
   --test <text>              Add a test/verification bullet; repeatable
   --next-action <text>       Add a next-action item; repeatable
   --evidence <text>          Add an evidence pointer; repeatable
+  --memory-candidate <text>  Add a memory-candidate bullet; repeatable
   --from-checkpoints latest  For 'now': include recent checkpoints as provenance anchors
   --checkpoint-dir <path>    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
 

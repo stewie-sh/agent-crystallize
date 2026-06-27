@@ -46,12 +46,13 @@ agent-crystallize now \
   --open-loop "Run duplicate-row replay test." \
   --test "npm test passed." \
   --next-action "Run replay test before compaction." \
-  --evidence "git commit abc123"
+  --evidence "git commit abc123" \
+  --memory-candidate "Strict parser behavior should be reused in future callback work."
 ```
 
 Each structured flag is repeatable. Use them when you already know the decision,
-finding, open loop, test result, next action, or evidence pointer at capture
-time.
+finding, open loop, test result, next action, evidence pointer, or memory
+candidate at capture time.
 
 ## Validation
 
@@ -74,7 +75,8 @@ Errors include:
 
 Warnings include:
 
-- TODO-only Decisions, Findings, Tests And Verification, or Open Loops;
+- TODO-only Decisions, Findings, Tests And Verification, Open Loops, or Memory
+  Candidates;
 - Resume Prompt that does not reference the artifact path or filename.
 
 Use `--fail-on-warnings` when validating public examples or release fixtures.

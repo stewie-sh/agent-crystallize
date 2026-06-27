@@ -67,7 +67,8 @@ agent-crystallize now \
   --finding "Replay tests are the highest-risk remaining check." \
   --open-loop "Run duplicate-row replay test before handoff." \
   --test "npm test passed." \
-  --next-action "Run replay test and update this crystal."
+  --next-action "Run replay test and update this crystal." \
+  --memory-candidate "Strict replay checks should be captured before handoff."
 ```
 
 Validate local crystals before relying on them for handoff:
@@ -167,6 +168,7 @@ Options:
 --test <text>              Add a test/verification bullet; repeatable
 --next-action <text>       Add a next-action item; repeatable
 --evidence <text>          Add an evidence pointer; repeatable
+--memory-candidate <text>  Add a memory-candidate bullet; repeatable
 --from-checkpoints latest  For 'now': include recent checkpoints as provenance anchors
 --checkpoint-dir <path>    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
 ```
