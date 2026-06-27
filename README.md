@@ -2,6 +2,8 @@
 
 Local-first checkpoints and crystals for long-running AI coding agent sessions.
 
+Status: private pre-public seed. The npm package is not published yet.
+
 ```text
 Compaction keeps the model running.
 Crystallization keeps the work recoverable.
