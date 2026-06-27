@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -48,6 +48,8 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   const surface = takeFlag(rest, "--surface") ?? "cli";
   const bodyFlag = takeFlag(rest, "--body");
   const readStdin = takeBooleanFlag(rest, "--stdin");
+  const fromCheckpoints = takeFlag(rest, "--from-checkpoints");
+  const checkpointDir = takeFlag(rest, "--checkpoint-dir");
   const outDir = resolve(repo, takeFlag(rest, "--out-dir") ?? (kind === "checkpoint" ? ".agent-crystals/checkpoints" : ".agent-crystals/sessions"));
   const body = bodyFlag ?? (readStdin ? await readStdinBody() : rest.join(" ").trim());
 
@@ -55,9 +57,16 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   if (!["fast", "standard", "deep"].includes(budget)) {
     throw new Error(`Invalid --budget ${budget}; expected fast, standard, or deep.`);
   }
+  if (fromCheckpoints && fromCheckpoints !== "latest") {
+    throw new Error(`Invalid --from-checkpoints ${fromCheckpoints}; expected latest.`);
+  }
 
   const observedAt = new Date();
   const git = collectGitContext(repo);
+  const checkpointTrail =
+    kind === "crystal" && fromCheckpoints === "latest"
+      ? collectCheckpointTrail(repo, checkpointDir ?? ".agent-crystals/checkpoints")
+      : [];
   const instructionFiles = ["AGENTS.md", "CLAUDE.md", "docs/context/WARM_START.md"].filter((path) =>
     existsSync(resolve(repo, path)),
   );
@@ -76,6 +85,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
     observedAt,
     body,
     git,
+    checkpointTrail,
     instructionFiles,
     outputRelativePath: relativePath,
   });
@@ -90,6 +100,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
     scope,
     budget,
     kind,
+    checkpointCount: checkpointTrail.length,
     note: "Local artifact written. Sync/storage adapters can import this artifact later.",
   };
 
@@ -104,6 +115,13 @@ interface GitContext {
   diffStat?: string;
   changedFiles?: string;
   error?: string;
+}
+
+interface CheckpointSummary {
+  path: string;
+  title: string;
+  observedAt?: string;
+  focus: string;
 }
 
 function collectGitContext(repo: string): GitContext {
@@ -132,6 +150,54 @@ function git(repo: string, gitArgs: string[]) {
   }
 }
 
+function collectCheckpointTrail(repo: string, checkpointDir: string): CheckpointSummary[] {
+  const absoluteDir = resolve(repo, checkpointDir);
+  if (!existsSync(absoluteDir)) return [];
+
+  return readdirSync(absoluteDir)
+    .filter((entry) => entry.endsWith(".md"))
+    .map((entry) => {
+      const absolutePath = resolve(absoluteDir, entry);
+      return {
+        absolutePath,
+        relativePath: relative(repo, absolutePath),
+        mtimeMs: statSync(absolutePath).mtimeMs,
+      };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.relativePath.localeCompare(a.relativePath))
+    .slice(0, 5)
+    .map(({ absolutePath, relativePath }) => {
+      const markdown = readFileSync(absolutePath, "utf8");
+      return {
+        path: relativePath,
+        title: extractTitle(markdown) ?? basename(relativePath),
+        observedAt: extractHeaderValue(markdown, "Observed at"),
+        focus: excerpt(extractSection(markdown, "Current Focus") ?? "", 500),
+      };
+    });
+}
+
+function extractTitle(markdown: string) {
+  return markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
+}
+
+function extractHeaderValue(markdown: string, label: string) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return markdown.match(new RegExp(`^- ${escaped}:\\s*(.+)$`, "m"))?.[1]?.trim();
+}
+
+function extractSection(markdown: string, heading: string) {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = markdown.match(new RegExp(`^## ${escaped}\\s*\\n([\\s\\S]*?)(?=\\n## |\\s*$)`, "m"));
+  return match?.[1]?.trim();
+}
+
+function excerpt(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized || "(no current focus captured)";
+  return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
 function renderCrystal(input: {
   kind: ArtifactKind;
   title: string;
@@ -143,10 +209,15 @@ function renderCrystal(input: {
   observedAt: Date;
   body: string;
   git: GitContext;
+  checkpointTrail: CheckpointSummary[];
   instructionFiles: string[];
   outputRelativePath: string;
 }) {
-  const currentFocus = input.body || "TODO: Fill in current focus, decisions, open loops, and next action.";
+  const currentFocus =
+    input.body ||
+    (input.checkpointTrail.length > 0
+      ? "No explicit session body was supplied. Use the checkpoint trail below as provenance, then fill in decisions, open loops, and next actions while context is still fresh."
+      : "TODO: Fill in current focus, decisions, open loops, and next action.");
   const noun = input.kind === "checkpoint" ? "checkpoint" : "crystal";
   const sourceWindow = input.kind === "checkpoint" ? "manual mini-crystallization checkpoint" : "manual CLI snapshot";
   return `# ${input.title}
@@ -171,6 +242,8 @@ ${currentFocus}
 - Checkpoints are mini-crystallizations: lightweight save-points for long goals across compaction and sessions.
 - Raw sessions and tool outputs are evidence, not truth.
 - Derived decisions/findings should keep provenance back to evidence.
+
+${renderCheckpointTrail(input.kind, input.checkpointTrail)}
 
 ## Decisions
 
@@ -239,6 +312,32 @@ Resume from Current Focus, Decisions, Open Loops, and Next Actions.
 `;
 }
 
+function renderCheckpointTrail(kind: ArtifactKind, checkpoints: CheckpointSummary[]) {
+  if (kind === "checkpoint") {
+    return `## Checkpoint Trail
+
+- This artifact is itself a checkpoint. Session crystals can roll up checkpoints with \`agent-crystallize now --from-checkpoints latest\`.`;
+  }
+
+  if (checkpoints.length === 0) {
+    return `## Checkpoint Trail
+
+- No checkpoint trail was requested or discovered. Use \`--from-checkpoints latest\` to roll up recent checkpoints into a session crystal.`;
+  }
+
+  return `## Checkpoint Trail
+
+Recent checkpoints used as provenance anchors. Deduplicate against these instead of restating each one in full.
+
+${checkpoints
+  .map((checkpoint) => {
+    const observed = checkpoint.observedAt ? ` (${checkpoint.observedAt})` : "";
+    return `- \`${checkpoint.path}\`: ${checkpoint.title}${observed}
+  - Focus: ${checkpoint.focus}`;
+  })
+  .join("\n")}`;
+}
+
 async function readStdinBody() {
   let body = "";
   for await (const chunk of process.stdin) {
@@ -298,5 +397,7 @@ Options:
   --surface <surface>        codex|claude-code|cli|hook; default cli
   --body <text>              Current focus body
   --stdin                    Read current focus body from stdin
+  --from-checkpoints latest  For 'now': include recent checkpoints as provenance anchors
+  --checkpoint-dir <path>    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
 `);
 }

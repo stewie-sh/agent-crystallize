@@ -61,6 +61,14 @@ agent-crystallize now \
   --body "Current focus, decisions, open loops, and next action."
 ```
 
+Create a checkpoint-aware session crystal that rolls up recent checkpoints:
+
+```bash
+agent-crystallize now \
+  --from-checkpoints latest \
+  --body "What changed since the latest checkpoint, current open loops, and next action."
+```
+
 Read body text from stdin:
 
 ```bash
@@ -112,6 +120,10 @@ Options:
 --surface <name>    codex|claude-code|cursor|cli|hook
 --body <text>       Current focus body
 --stdin             Read body from stdin
+--from-checkpoints latest
+                    For 'now': include recent checkpoints as provenance anchors
+--checkpoint-dir <path>
+                    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
 ```
 
 ## Relationship To Stewie

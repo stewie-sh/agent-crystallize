@@ -20,6 +20,7 @@ Generated artifacts include:
 - Header
 - Current Focus
 - Durable Framing
+- Checkpoint Trail
 - Decisions
 - Findings
 - Reality Checks
@@ -32,6 +33,19 @@ Generated artifacts include:
 
 The initial file is intentionally editable. Fill TODO sections while the session
 context is fresh.
+
+## Checkpoint Trail
+
+When `agent-crystallize now --from-checkpoints latest` is used, the generated
+session crystal includes recent checkpoint paths, titles, observed timestamps,
+and short Current Focus excerpts.
+
+The checkpoint trail is provenance, not the final synthesis. Use it to:
+
+- avoid repeating decisions already captured in checkpoints;
+- identify what changed since the latest checkpoint;
+- preserve file paths a future agent can inspect;
+- focus the session crystal on open loops and resume state.
 
 ## Evidence Discipline
 

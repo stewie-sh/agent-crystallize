@@ -32,6 +32,21 @@ This writes under:
 .agent-crystals/sessions/
 ```
 
+## Roll Up Recent Checkpoints
+
+If you have been checkpointing throughout a long task, create the session
+crystal from those checkpoints instead of starting from a blank summary:
+
+```bash
+agent-crystallize now \
+  --from-checkpoints latest \
+  --body "Current state after the latest checkpoint, anything not captured yet, and next action."
+```
+
+This includes up to five recent checkpoint files as provenance anchors in the
+generated crystal. The crystal should synthesize and deduplicate them; it should
+not restate every checkpoint in full.
+
 ## Suggested Cadence
 
 Checkpoint after:
