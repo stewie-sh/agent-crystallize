@@ -34,6 +34,25 @@ Generated artifacts include:
 The initial file is intentionally editable. Fill TODO sections while the session
 context is fresh.
 
+## Structured Fields
+
+The CLI can fill common sections directly:
+
+```bash
+agent-crystallize now \
+  --body "Ready to hand off parser work." \
+  --decision "Keep parser strict for v0." \
+  --finding "Replay coverage is still the main risk." \
+  --open-loop "Run duplicate-row replay test." \
+  --test "npm test passed." \
+  --next-action "Run replay test before compaction." \
+  --evidence "git commit abc123"
+```
+
+Each structured flag is repeatable. Use them when you already know the decision,
+finding, open loop, test result, next action, or evidence pointer at capture
+time.
+
 ## Validation
 
 Run:

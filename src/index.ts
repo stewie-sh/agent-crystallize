@@ -68,6 +68,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   const readStdin = takeBooleanFlag(rest, "--stdin");
   const fromCheckpoints = takeFlag(rest, "--from-checkpoints");
   const checkpointDir = takeFlag(rest, "--checkpoint-dir");
+  const structured = takeStructuredFields(rest);
   const outDir = resolve(repo, takeFlag(rest, "--out-dir") ?? (kind === "checkpoint" ? ".agent-crystals/checkpoints" : ".agent-crystals/sessions"));
   const body = bodyFlag ?? (readStdin ? await readStdinBody() : rest.join(" ").trim());
 
@@ -102,6 +103,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
     surface,
     observedAt,
     body,
+    structured,
     git,
     checkpointTrail,
     instructionFiles,
@@ -214,6 +216,15 @@ interface CheckpointSummary {
   title: string;
   observedAt?: string;
   focus: string;
+}
+
+interface StructuredFields {
+  decisions: string[];
+  findings: string[];
+  openLoops: string[];
+  tests: string[];
+  nextActions: string[];
+  evidence: string[];
 }
 
 function collectGitContext(repo: string): GitContext {
@@ -334,6 +345,7 @@ function renderCrystal(input: {
   surface: string;
   observedAt: Date;
   body: string;
+  structured: StructuredFields;
   git: GitContext;
   checkpointTrail: CheckpointSummary[];
   instructionFiles: string[];
@@ -373,11 +385,11 @@ ${renderCheckpointTrail(input.kind, input.checkpointTrail)}
 
 ## Decisions
 
-- TODO: Record decisions with authority and evidence.
+${renderBullets(input.structured.decisions, "TODO: Record decisions with authority and evidence.")}
 
 ## Findings
 
-- TODO: Record findings observed from docs, code, runtime, or discussion.
+${renderBullets(input.structured.findings, "TODO: Record findings observed from docs, code, runtime, or discussion.")}
 
 ## Reality Checks
 
@@ -409,13 +421,17 @@ ${input.git.changedFiles || "(none or unavailable)"}
 
 ${input.instructionFiles.length > 0 ? input.instructionFiles.map((file) => `- ${file}`).join("\n") : "- (none detected)"}
 
+### Evidence Pointers
+
+${renderBullets(input.structured.evidence, "(none provided)")}
+
 ## Tests And Verification
 
-- TODO: Record commands run and results.
+${renderBullets(input.structured.tests, "TODO: Record commands run and results.")}
 
 ## Open Loops
 
-- TODO: Record blockers, questions, and next verification steps.
+${renderBullets(input.structured.openLoops, "TODO: Record blockers, questions, and next verification steps.")}
 
 ## Memory Candidates
 
@@ -423,9 +439,11 @@ ${input.instructionFiles.length > 0 ? input.instructionFiles.map((file) => `- ${
 
 ## Next Actions
 
-1. Review and complete TODO sections while session context is still fresh.
-2. Import or link this ${noun} from any memory system you trust.
-3. Use this ${noun} as a resume source after compaction or handoff.
+${renderNumbered(input.structured.nextActions, [
+  "Review and complete TODO sections while session context is still fresh.",
+  `Import or link this ${noun} from any memory system you trust.`,
+  `Use this ${noun} as a resume source after compaction or handoff.`,
+])}
 
 ## Resume Prompt
 
@@ -472,6 +490,17 @@ async function readStdinBody() {
   return body.trim();
 }
 
+function takeStructuredFields(values: string[]): StructuredFields {
+  return {
+    decisions: takeRepeatedFlag(values, "--decision"),
+    findings: takeRepeatedFlag(values, "--finding"),
+    openLoops: takeRepeatedFlag(values, "--open-loop"),
+    tests: takeRepeatedFlag(values, "--test"),
+    nextActions: takeRepeatedFlag(values, "--next-action"),
+    evidence: takeRepeatedFlag(values, "--evidence"),
+  };
+}
+
 function takeFlag(values: string[], flag: string): string | undefined {
   const index = values.indexOf(flag);
   if (index < 0) return undefined;
@@ -486,6 +515,28 @@ function takeBooleanFlag(values: string[], flag: string): boolean {
   if (index < 0) return false;
   values.splice(index, 1);
   return true;
+}
+
+function takeRepeatedFlag(values: string[], flag: string): string[] {
+  const results: string[] = [];
+  for (;;) {
+    const index = values.indexOf(flag);
+    if (index < 0) return results;
+    const value = values[index + 1];
+    if (!value || value.startsWith("--")) throw new Error(`Missing value for ${flag}.`);
+    results.push(value);
+    values.splice(index, 2);
+  }
+}
+
+function renderBullets(items: string[], fallback: string) {
+  if (items.length === 0) return `- ${fallback}`;
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
+function renderNumbered(items: string[], fallback: string[]) {
+  const values = items.length > 0 ? items : fallback;
+  return values.map((item, index) => `${index + 1}. ${item}`).join("\n");
 }
 
 function slugify(value: string) {
@@ -524,6 +575,12 @@ Options:
   --surface <surface>        codex|claude-code|cli|hook; default cli
   --body <text>              Current focus body
   --stdin                    Read current focus body from stdin
+  --decision <text>          Add a decision bullet; repeatable
+  --finding <text>           Add a finding bullet; repeatable
+  --open-loop <text>         Add an open-loop bullet; repeatable
+  --test <text>              Add a test/verification bullet; repeatable
+  --next-action <text>       Add a next-action item; repeatable
+  --evidence <text>          Add an evidence pointer; repeatable
   --from-checkpoints latest  For 'now': include recent checkpoints as provenance anchors
   --checkpoint-dir <path>    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
 

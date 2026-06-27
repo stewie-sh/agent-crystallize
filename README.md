@@ -62,7 +62,12 @@ the session crystal:
 ```bash
 agent-crystallize now \
   --from-checkpoints latest \
-  --body "What changed since the latest checkpoint, current open loops, and next action."
+  --body "What changed since the latest checkpoint, current open loops, and next action." \
+  --decision "Keep the parser local-first for this release." \
+  --finding "Replay tests are the highest-risk remaining check." \
+  --open-loop "Run duplicate-row replay test before handoff." \
+  --test "npm test passed." \
+  --next-action "Run replay test and update this crystal."
 ```
 
 Validate local crystals before relying on them for handoff:
@@ -156,6 +161,12 @@ Options:
 --surface <name>           codex|claude-code|cursor|cli|hook
 --body <text>              Current focus body
 --stdin                    Read body from stdin
+--decision <text>          Add a decision bullet; repeatable
+--finding <text>           Add a finding bullet; repeatable
+--open-loop <text>         Add an open-loop bullet; repeatable
+--test <text>              Add a test/verification bullet; repeatable
+--next-action <text>       Add a next-action item; repeatable
+--evidence <text>          Add an evidence pointer; repeatable
 --from-checkpoints latest  For 'now': include recent checkpoints as provenance anchors
 --checkpoint-dir <path>    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
 ```
@@ -178,6 +189,7 @@ cat handoff.md | agent-crystallize checkpoint --stdin
 
 - [Basic checkpoint](examples/checkpoint.md)
 - [Compaction recovery flow](examples/compaction-recovery.md)
+- [Strict crystal example](examples/strict-crystal.md)
 
 ## Relationship To Stewie
 

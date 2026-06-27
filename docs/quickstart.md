@@ -40,12 +40,40 @@ crystal from those checkpoints instead of starting from a blank summary:
 ```bash
 agent-crystallize now \
   --from-checkpoints latest \
-  --body "Current state after the latest checkpoint, anything not captured yet, and next action."
+  --body "Current state after the latest checkpoint, anything not captured yet, and next action." \
+  --decision "Keep the import pipeline local-first in this slice." \
+  --finding "Replay coverage is the main remaining risk." \
+  --open-loop "Run webhook replay test before handoff." \
+  --test "npm test passed." \
+  --next-action "Run replay test and update the session crystal."
 ```
 
 This includes up to five recent checkpoint files as provenance anchors in the
 generated crystal. The crystal should synthesize and deduplicate them; it should
 not restate every checkpoint in full.
+
+## Fill Structured Sections
+
+Use repeatable structured flags to avoid TODO-heavy artifacts:
+
+```bash
+agent-crystallize checkpoint \
+  --body "Finished payment callback parsing." \
+  --decision "Keep parser strict; reject ambiguous callback payloads." \
+  --finding "Fixture coverage caught one duplicate-row edge case." \
+  --open-loop "Replay production-like webhook payloads." \
+  --test "npm test passed." \
+  --next-action "Run webhook replay test."
+```
+
+Available structured flags:
+
+- `--decision`
+- `--finding`
+- `--open-loop`
+- `--test`
+- `--next-action`
+- `--evidence`
 
 ## Validate Local Crystals
 
