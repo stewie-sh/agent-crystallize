@@ -1,0 +1,18 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Node
+node_modules/
+dist/
+
+# Local generated crystals
+.agent-crystals/
+
+# Local harness output
+.playwright-cli/
