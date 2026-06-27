@@ -24,3 +24,23 @@ jobs:
 
       - name: Check
         run: npm run check
+
+      - name: Smoke
+        run: |
+          tmpdir="$(mktemp -d)"
+          git init -q "$tmpdir"
+          node dist/index.js checkpoint \
+            --repo "$tmpdir" \
+            --project demo \
+            --surface cli \
+            --body "Runtime smoke for structured crystal fields." \
+            --topic "smoke" \
+            --relation "relates_to:ci" \
+            --decision "Keep CLI smoke coverage in CI." \
+            --finding "Structured fields render into the generated crystal." \
+            --open-loop "Replace this shell smoke with tests when the package grows." \
+            --test "npm run check passed before smoke." \
+            --next-action "Inspect CI result." \
+            --evidence "GitHub Actions" \
+            --memory-candidate "Runtime smoke should cover the CLI entrypoint."
+          node dist/index.js validate --repo "$tmpdir" --fail-on-warnings

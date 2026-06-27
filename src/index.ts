@@ -221,6 +221,8 @@ interface CheckpointSummary {
 }
 
 interface StructuredFields {
+  topics: string[];
+  relations: RelationHint[];
   decisions: string[];
   findings: string[];
   openLoops: string[];
@@ -228,6 +230,11 @@ interface StructuredFields {
   nextActions: string[];
   evidence: string[];
   memoryCandidates: string[];
+}
+
+interface RelationHint {
+  type: string;
+  target: string;
 }
 
 function collectGitContext(repo: string): GitContext {
@@ -383,8 +390,17 @@ ${currentFocus}
 - Checkpoints are mini-crystallizations: lightweight save-points for long goals across compaction and sessions.
 - Raw sessions and tool outputs are evidence, not truth.
 - Derived decisions/findings should keep provenance back to evidence.
+- Topics and relation hints are lightweight metadata for later indexing, not a graph database.
 
 ${renderCheckpointTrail(input.kind, input.checkpointTrail)}
+
+## Topics
+
+${renderBullets(input.structured.topics, "No explicit topics captured.")}
+
+## Relation Hints
+
+${renderRelations(input.structured.relations)}
 
 ## Decisions
 
@@ -495,6 +511,8 @@ async function readStdinBody() {
 
 function takeStructuredFields(values: string[]): StructuredFields {
   return {
+    topics: [...takeRepeatedFlag(values, "--topic"), ...takeRepeatedFlag(values, "--tag")],
+    relations: parseRelationHints(takeRepeatedFlag(values, "--relation")),
     decisions: takeRepeatedFlag(values, "--decision"),
     findings: takeRepeatedFlag(values, "--finding"),
     openLoops: takeRepeatedFlag(values, "--open-loop"),
@@ -503,6 +521,19 @@ function takeStructuredFields(values: string[]): StructuredFields {
     evidence: takeRepeatedFlag(values, "--evidence"),
     memoryCandidates: takeRepeatedFlag(values, "--memory-candidate"),
   };
+}
+
+function parseRelationHints(values: string[]): RelationHint[] {
+  return values.map((value) => {
+    const separator = value.indexOf(":");
+    if (separator <= 0 || separator === value.length - 1) {
+      throw new Error(`Invalid --relation ${value}; expected type:target.`);
+    }
+    return {
+      type: value.slice(0, separator).trim(),
+      target: value.slice(separator + 1).trim(),
+    };
+  });
 }
 
 function takeFlag(values: string[], flag: string): string | undefined {
@@ -536,6 +567,13 @@ function takeRepeatedFlag(values: string[], flag: string): string[] {
 function renderBullets(items: string[], fallback: string) {
   if (items.length === 0) return `- ${fallback}`;
   return items.map((item) => `- ${item}`).join("\n");
+}
+
+function renderRelations(items: RelationHint[]) {
+  if (items.length === 0) {
+    return "- No explicit relation hints captured.";
+  }
+  return items.map((item) => `- ${item.type}: ${item.target}`).join("\n");
 }
 
 function renderNumbered(items: string[], fallback: string[]) {
@@ -579,6 +617,9 @@ Options:
   --surface <surface>        codex|claude-code|cli|hook; default cli
   --body <text>              Current focus body
   --stdin                    Read current focus body from stdin
+  --topic <name>             Add a topic label; repeatable
+  --tag <name>               Alias for --topic; repeatable
+  --relation <type:target>   Add a lightweight relation hint; repeatable
   --decision <text>          Add a decision bullet; repeatable
   --finding <text>           Add a finding bullet; repeatable
   --open-loop <text>         Add an open-loop bullet; repeatable

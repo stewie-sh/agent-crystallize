@@ -63,6 +63,8 @@ the session crystal:
 agent-crystallize now \
   --from-checkpoints latest \
   --body "What changed since the latest checkpoint, current open loops, and next action." \
+  --topic "parser" \
+  --relation "depends_on:git commit abc123" \
   --decision "Keep the parser local-first for this release." \
   --finding "Replay tests are the highest-risk remaining check." \
   --open-loop "Run duplicate-row replay test before handoff." \
@@ -120,6 +122,7 @@ agent-crystallize --help
 
 - current focus;
 - checkpoint trail for session crystals;
+- topics and lightweight relation hints for later indexing;
 - git commit, branch, status, diff stat, and changed files;
 - detected instruction files such as `AGENTS.md` and `CLAUDE.md`;
 - decision, finding, open-loop, and next-action sections;
@@ -162,6 +165,9 @@ Options:
 --surface <name>           codex|claude-code|cursor|cli|hook
 --body <text>              Current focus body
 --stdin                    Read body from stdin
+--topic <name>             Add a topic label; repeatable
+--tag <name>               Alias for --topic; repeatable
+--relation <type:target>   Add a lightweight relation hint; repeatable
 --decision <text>          Add a decision bullet; repeatable
 --finding <text>           Add a finding bullet; repeatable
 --open-loop <text>         Add an open-loop bullet; repeatable

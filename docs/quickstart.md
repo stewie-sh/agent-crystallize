@@ -41,6 +41,8 @@ crystal from those checkpoints instead of starting from a blank summary:
 agent-crystallize now \
   --from-checkpoints latest \
   --body "Current state after the latest checkpoint, anything not captured yet, and next action." \
+  --topic "import-pipeline" \
+  --relation "depends_on:git commit abc123" \
   --decision "Keep the import pipeline local-first in this slice." \
   --finding "Replay coverage is the main remaining risk." \
   --open-loop "Run webhook replay test before handoff." \
@@ -60,6 +62,8 @@ Use repeatable structured flags to avoid TODO-heavy artifacts:
 ```bash
 agent-crystallize checkpoint \
   --body "Finished payment callback parsing." \
+  --topic "payment-callbacks" \
+  --relation "relates_to:examples/strict-crystal.md" \
   --decision "Keep parser strict; reject ambiguous callback payloads." \
   --finding "Fixture coverage caught one duplicate-row edge case." \
   --open-loop "Replay production-like webhook payloads." \
@@ -77,6 +81,9 @@ Available structured flags:
 - `--next-action`
 - `--evidence`
 - `--memory-candidate`
+- `--topic`
+- `--tag`
+- `--relation type:target`
 
 ## Validate Local Crystals
 

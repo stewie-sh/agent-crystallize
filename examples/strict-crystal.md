@@ -8,6 +8,8 @@ agent-crystallize now \
   --project demo \
   --surface codex \
   --body "Parser refactor is complete. The next session should verify replay behavior before handoff." \
+  --topic "parser" \
+  --relation "depends_on:git commit abc123" \
   --decision "Keep parser strict for v0; reject ambiguous callback payloads." \
   --finding "Fixture coverage caught one duplicate-row edge case." \
   --open-loop "Run production-like webhook replay test." \

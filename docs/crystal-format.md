@@ -21,6 +21,8 @@ Generated artifacts include:
 - Current Focus
 - Durable Framing
 - Checkpoint Trail
+- Topics
+- Relation Hints
 - Decisions
 - Findings
 - Reality Checks
@@ -41,6 +43,8 @@ The CLI can fill common sections directly:
 ```bash
 agent-crystallize now \
   --body "Ready to hand off parser work." \
+  --topic "parser" \
+  --relation "depends_on:git commit abc123" \
   --decision "Keep parser strict for v0." \
   --finding "Replay coverage is still the main risk." \
   --open-loop "Run duplicate-row replay test." \
@@ -53,6 +57,33 @@ agent-crystallize now \
 Each structured flag is repeatable. Use them when you already know the decision,
 finding, open loop, test result, next action, evidence pointer, or memory
 candidate at capture time.
+
+## Topics And Relation Hints
+
+Topics and relation hints are intentionally lightweight. They help future tools
+index or import crystals without turning this local CLI into a graph database.
+
+Use topics for stable conceptual labels:
+
+```bash
+agent-crystallize checkpoint \
+  --topic "agent-context-crystallization" \
+  --topic "compaction-recovery" \
+  --body "Checkpoint-aware handoff now works."
+```
+
+Use relation hints for pointers a richer memory system can interpret later:
+
+```bash
+agent-crystallize checkpoint \
+  --relation "fixes:.agent-crystals/checkpoints/20260627T165406Z-quality-checkpoint-pass.md" \
+  --relation "depends_on:git commit abc123" \
+  --body "Validation bug fixed and verified."
+```
+
+Suggested relation types include `derived_from`, `fixes`, `supersedes`,
+`validates`, `depends_on`, `relates_to`, `blocks`, `unlocks`, `contradicts`,
+`generalizes`, `branches_from`, and `merged_into`.
 
 ## Validation
 
