@@ -194,6 +194,9 @@ function validateCrystalFile(repo: string, absolutePath: string): ValidationResu
     const body = extractSection(markdown, section) ?? "";
     if (isTodoOnly(body)) warnings.push(`${section} is TODO-only`);
   }
+  if (!hasSection(markdown, "Session Provenance")) {
+    warnings.push("Session Provenance is missing; newer crystals should include safe session/source pointers when available");
+  }
   const memoryCandidates = extractSection(markdown, "Memory Candidates") ?? "";
   if (isTodoOnly(memoryCandidates)) warnings.push("Memory Candidates is TODO-only");
 
@@ -230,6 +233,7 @@ interface CheckpointSummary {
 interface StructuredFields {
   topics: string[];
   relations: RelationHint[];
+  provenance: ProvenanceFields;
   decisions: string[];
   findings: string[];
   openLoops: string[];
@@ -242,6 +246,26 @@ interface StructuredFields {
 interface RelationHint {
   type: string;
   target: string;
+}
+
+interface ProvenanceFields {
+  agentBody?: string;
+  harness?: string;
+  harnessVersion?: string;
+  sessionId?: string;
+  threadId?: string;
+  runId?: string;
+  conversationId?: string;
+  taskId?: string;
+  transcriptUri?: string;
+  model?: string;
+  sourceRefs: string[];
+  custom: ProvenancePair[];
+}
+
+interface ProvenancePair {
+  key: string;
+  value: string;
 }
 
 function collectGitContext(repo: string): GitContext {
@@ -422,6 +446,10 @@ ${renderBullets(input.structured.topics, "No explicit topics captured.")}
 
 ${renderRelations(input.structured.relations)}
 
+## Session Provenance
+
+${renderSessionProvenance(input.structured.provenance, input.surface)}
+
 ## Decisions
 
 ${renderBullets(input.structured.decisions, "TODO: Record decisions with authority and evidence.")}
@@ -533,6 +561,7 @@ function takeStructuredFields(values: string[]): StructuredFields {
   return {
     topics: [...takeRepeatedFlag(values, "--topic"), ...takeRepeatedFlag(values, "--tag")],
     relations: parseRelationHints(takeRepeatedFlag(values, "--relation")),
+    provenance: takeProvenanceFields(values),
     decisions: takeRepeatedFlag(values, "--decision"),
     findings: takeRepeatedFlag(values, "--finding"),
     openLoops: takeRepeatedFlag(values, "--open-loop"),
@@ -540,6 +569,23 @@ function takeStructuredFields(values: string[]): StructuredFields {
     nextActions: takeRepeatedFlag(values, "--next-action"),
     evidence: takeRepeatedFlag(values, "--evidence"),
     memoryCandidates: takeRepeatedFlag(values, "--memory-candidate"),
+  };
+}
+
+function takeProvenanceFields(values: string[]): ProvenanceFields {
+  return {
+    agentBody: takeFlag(values, "--agent-body"),
+    harness: takeFlag(values, "--harness"),
+    harnessVersion: takeFlag(values, "--harness-version"),
+    sessionId: takeFlag(values, "--session-id"),
+    threadId: takeFlag(values, "--thread-id"),
+    runId: takeFlag(values, "--run-id"),
+    conversationId: takeFlag(values, "--conversation-id"),
+    taskId: takeFlag(values, "--task-id"),
+    transcriptUri: takeFlag(values, "--transcript-uri"),
+    model: takeFlag(values, "--model"),
+    sourceRefs: takeRepeatedFlag(values, "--source-ref"),
+    custom: parseProvenancePairs(takeRepeatedFlag(values, "--provenance")),
   };
 }
 
@@ -552,6 +598,19 @@ function parseRelationHints(values: string[]): RelationHint[] {
     return {
       type: value.slice(0, separator).trim(),
       target: value.slice(separator + 1).trim(),
+    };
+  });
+}
+
+function parseProvenancePairs(values: string[]): ProvenancePair[] {
+  return values.map((value) => {
+    const separator = value.indexOf("=");
+    if (separator <= 0 || separator === value.length - 1) {
+      throw new Error(`Invalid --provenance ${value}; expected key=value.`);
+    }
+    return {
+      key: value.slice(0, separator).trim(),
+      value: value.slice(separator + 1).trim(),
     };
   });
 }
@@ -594,6 +653,36 @@ function renderRelations(items: RelationHint[]) {
     return "- No explicit relation hints captured.";
   }
   return items.map((item) => `- ${item.type}: ${item.target}`).join("\n");
+}
+
+function renderSessionProvenance(provenance: ProvenanceFields, surface: string) {
+  const rows: string[] = [`- Surface: ${surface}`];
+  const fields: Array<[string, string | undefined]> = [
+    ["Agent body", provenance.agentBody],
+    ["Harness", provenance.harness],
+    ["Harness version", provenance.harnessVersion],
+    ["Session id", provenance.sessionId],
+    ["Thread id", provenance.threadId],
+    ["Run id", provenance.runId],
+    ["Conversation id", provenance.conversationId],
+    ["Task id", provenance.taskId],
+    ["Transcript URI", provenance.transcriptUri],
+    ["Model", provenance.model],
+  ];
+
+  for (const [label, value] of fields) {
+    if (value) rows.push(`- ${label}: ${value}`);
+  }
+  for (const sourceRef of provenance.sourceRefs) {
+    rows.push(`- Source ref: ${sourceRef}`);
+  }
+  for (const pair of provenance.custom) {
+    rows.push(`- ${pair.key}: ${pair.value}`);
+  }
+  if (rows.length === 1) {
+    rows.push("- No explicit session provenance supplied. Add safe source/session pointers when available; never dump broad environment variables.");
+  }
+  return rows.join("\n");
 }
 
 function renderNumbered(items: string[], fallback: string[]) {
@@ -640,6 +729,18 @@ Options:
   --topic <name>             Add a topic label; repeatable
   --tag <name>               Alias for --topic; repeatable
   --relation <type:target>   Add a lightweight relation hint; repeatable
+  --agent-body <name>        Agent/body name, for example codex or claude-code
+  --harness <name>           Harness/runtime name
+  --harness-version <value>  Harness/runtime version
+  --session-id <id>          Session id from the active agent harness
+  --thread-id <id>           Thread id from the active agent harness
+  --run-id <id>              Run id from the active agent harness
+  --conversation-id <id>     Conversation id from the active agent harness
+  --task-id <id>             Task id from the active agent harness
+  --transcript-uri <uri>     Transcript/source URI or local path pointer
+  --source-ref <ref>         Source pointer such as file:line or transcript range; repeatable
+  --model <name>             Model name if safe and useful to record
+  --provenance <key=value>   Extra safe provenance field; repeatable
   --decision <text>          Add a decision bullet; repeatable
   --finding <text>           Add a finding bullet; repeatable
   --open-loop <text>         Add an open-loop bullet; repeatable

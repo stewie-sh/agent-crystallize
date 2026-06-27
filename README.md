@@ -63,6 +63,10 @@ the session crystal:
 agent-crystallize now \
   --from-checkpoints latest \
   --body "What changed since the latest checkpoint, current open loops, and next action." \
+  --agent-body codex \
+  --harness codex-cli \
+  --session-id "$CODEX_THREAD_ID" \
+  --transcript-uri "$HOME/.codex/sessions/2026/06/28/rollout-example.jsonl" \
   --topic "parser" \
   --relation "depends_on:git commit abc123" \
   --decision "Keep the parser local-first for this release." \
@@ -123,6 +127,8 @@ agent-crystallize --help
 - current focus;
 - checkpoint trail for session crystals;
 - topics and lightweight relation hints for later indexing;
+- safe session provenance such as agent body, harness, session id, transcript
+  pointer, and source references when supplied;
 - git commit, branch, status, diff stat, and changed files;
 - detected instruction files such as `AGENTS.md` and `CLAUDE.md`;
 - decision, finding, open-loop, and next-action sections;
@@ -168,6 +174,18 @@ Options:
 --topic <name>             Add a topic label; repeatable
 --tag <name>               Alias for --topic; repeatable
 --relation <type:target>   Add a lightweight relation hint; repeatable
+--agent-body <name>        Agent/body name, for example codex or claude-code
+--harness <name>           Harness/runtime name
+--harness-version <value>  Harness/runtime version
+--session-id <id>          Session id from the active agent harness
+--thread-id <id>           Thread id from the active agent harness
+--run-id <id>              Run id from the active agent harness
+--conversation-id <id>     Conversation id from the active agent harness
+--task-id <id>             Task id from the active agent harness
+--transcript-uri <uri>     Transcript/source URI or local path pointer
+--source-ref <ref>         Source pointer such as file:line or transcript range; repeatable
+--model <name>             Model name if safe and useful to record
+--provenance <key=value>   Extra safe provenance field; repeatable
 --decision <text>          Add a decision bullet; repeatable
 --finding <text>           Add a finding bullet; repeatable
 --open-loop <text>         Add an open-loop bullet; repeatable

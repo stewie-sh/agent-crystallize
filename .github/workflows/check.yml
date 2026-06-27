@@ -34,6 +34,10 @@ jobs:
             --project demo \
             --surface cli \
             --body "Runtime smoke for structured crystal fields." \
+            --agent-body ci-agent \
+            --harness github-actions \
+            --run-id "$GITHUB_RUN_ID" \
+            --source-ref "workflow:.github/workflows/check.yml" \
             --topic "smoke" \
             --relation "relates_to:ci" \
             --decision "Keep CLI smoke coverage in CI." \

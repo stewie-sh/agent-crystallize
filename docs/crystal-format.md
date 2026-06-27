@@ -23,6 +23,7 @@ Generated artifacts include:
 - Checkpoint Trail
 - Topics
 - Relation Hints
+- Session Provenance
 - Decisions
 - Findings
 - Reality Checks
@@ -57,6 +58,44 @@ agent-crystallize now \
 Each structured flag is repeatable. Use them when you already know the decision,
 finding, open loop, test result, next action, evidence pointer, or memory
 candidate at capture time.
+
+## Session Provenance
+
+Use provenance flags to attach safe pointers back to the agent session, harness,
+or transcript that produced the checkpoint. These fields are pointers, not raw
+transcript dumps.
+
+```bash
+agent-crystallize checkpoint \
+  --surface codex \
+  --agent-body codex \
+  --harness codex-cli \
+  --harness-version 0.130.0 \
+  --session-id "$CODEX_THREAD_ID" \
+  --transcript-uri "$HOME/.codex/sessions/2026/06/28/rollout-example.jsonl" \
+  --source-ref "transcript:lines=1200-1450" \
+  --body "Captured parser handoff with session provenance."
+```
+
+Supported provenance flags:
+
+- `--agent-body`
+- `--harness`
+- `--harness-version`
+- `--session-id`
+- `--thread-id`
+- `--run-id`
+- `--conversation-id`
+- `--task-id`
+- `--transcript-uri`
+- `--source-ref` repeatable
+- `--model`
+- `--provenance key=value` repeatable for harness-specific safe fields
+
+Never pass broad environment dumps, API keys, tokens, cookies, or secret-bearing
+session-env files. If a harness does not expose safe session identifiers, leave
+the fields blank and capture a source ref such as a local checkpoint path, git
+commit, or issue URL instead.
 
 ## Topics And Relation Hints
 
@@ -108,6 +147,7 @@ Warnings include:
 
 - TODO-only Decisions, Findings, Tests And Verification, Open Loops, or Memory
   Candidates;
+- missing Session Provenance in older crystals;
 - Resume Prompt that does not reference the artifact path or filename.
 
 Use `--fail-on-warnings` when validating public examples or release fixtures.

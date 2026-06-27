@@ -85,6 +85,27 @@ Available structured flags:
 - `--tag`
 - `--relation type:target`
 
+## Add Safe Session Provenance
+
+When the active agent harness exposes safe session or transcript pointers, add
+them to the checkpoint. This makes future handoff, import, and debugging easier
+without storing raw transcripts in the crystal.
+
+```bash
+agent-crystallize checkpoint \
+  --surface codex \
+  --agent-body codex \
+  --harness codex-cli \
+  --harness-version 0.130.0 \
+  --session-id "$CODEX_THREAD_ID" \
+  --transcript-uri "$HOME/.codex/sessions/2026/06/28/rollout-example.jsonl" \
+  --source-ref "transcript:lines=1200-1450" \
+  --body "Finished parser handoff. Next session should inspect replay coverage."
+```
+
+Use only allowlisted, non-secret fields. Do not pass broad environment dumps,
+tokens, cookies, API keys, or secret-bearing session-env files.
+
 ## Validate Local Crystals
 
 Run a lightweight quality check before handoff:

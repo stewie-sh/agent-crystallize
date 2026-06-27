@@ -8,6 +8,11 @@ agent-crystallize now \
   --project demo \
   --surface codex \
   --body "Parser refactor is complete. The next session should verify replay behavior before handoff." \
+  --agent-body codex \
+  --harness codex-cli \
+  --session-id example-session-123 \
+  --transcript-uri "file:///home/user/.codex/sessions/example.jsonl" \
+  --source-ref "transcript:lines=1200-1450" \
   --topic "parser" \
   --relation "depends_on:git commit abc123" \
   --decision "Keep parser strict for v0; reject ambiguous callback payloads." \
