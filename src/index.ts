@@ -130,6 +130,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
 function validate(rest: string[]) {
   const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
   const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
+  const explicitFiles = takeRepeatedFlag(rest, "--files");
   const failOnWarnings = takeBooleanFlag(rest, "--fail-on-warnings");
   if (rest.length > 0) {
     throw new Error(`Unexpected validate arguments: ${rest.join(" ")}`);
@@ -137,7 +138,12 @@ function validate(rest: string[]) {
   if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
 
   const root = resolve(repo, crystalsDir);
-  const files = existsSync(root) ? listMarkdownFiles(root).sort() : [];
+  const files =
+    explicitFiles.length > 0
+      ? explicitFiles.map((file) => resolve(repo, file)).map((file) => validateExplicitFile(file)).sort()
+      : existsSync(root)
+        ? listMarkdownFiles(root).sort()
+        : [];
   const results = files.map((absolutePath) => validateCrystalFile(repo, absolutePath));
   const errorCount = results.reduce((count, result) => count + result.errors.length, 0);
   const warningCount = results.reduce((count, result) => count + result.warnings.length, 0);
@@ -148,7 +154,8 @@ function validate(rest: string[]) {
   return {
     ok,
     repo,
-    crystalsDir,
+    crystalsDir: explicitFiles.length > 0 ? undefined : crystalsDir,
+    filesMode: explicitFiles.length > 0,
     fileCount: results.length,
     errorCount,
     warningCount,
@@ -337,6 +344,19 @@ function listMarkdownFiles(root: string): string[] {
     }
   }
   return files;
+}
+
+function validateExplicitFile(absolutePath: string) {
+  if (!existsSync(absolutePath)) {
+    throw new Error(`File does not exist: ${absolutePath}`);
+  }
+  if (!statSync(absolutePath).isFile()) {
+    throw new Error(`Path is not a file: ${absolutePath}`);
+  }
+  if (!absolutePath.endsWith(".md")) {
+    throw new Error(`File is not Markdown: ${absolutePath}`);
+  }
+  return absolutePath;
 }
 
 function excerpt(value: string, maxLength: number) {
@@ -633,6 +653,7 @@ Options:
 Validate options:
   --repo <path>              Repo to validate; default cwd
   --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
+  --files <path>             Validate only this Markdown crystal; repeatable
   --fail-on-warnings         Exit non-zero when warnings are present
 `);
 }

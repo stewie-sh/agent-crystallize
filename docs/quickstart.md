@@ -99,6 +99,15 @@ Use stricter validation in CI or before public examples:
 agent-crystallize validate --fail-on-warnings
 ```
 
+Validate only a clean subset when old or experimental crystals exist:
+
+```bash
+agent-crystallize validate \
+  --files .agent-crystals/checkpoints/20260627T170254Z-context-checkpoint-demo.md \
+  --files .agent-crystals/sessions/20260627T171500Z-context-crystal-demo.md \
+  --fail-on-warnings
+```
+
 Validation checks for:
 
 - required sections;

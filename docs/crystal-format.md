@@ -112,6 +112,16 @@ Warnings include:
 
 Use `--fail-on-warnings` when validating public examples or release fixtures.
 
+Use repeatable `--files` to validate a clean subset instead of every historical
+artifact under `.agent-crystals/`:
+
+```bash
+agent-crystallize validate \
+  --files .agent-crystals/checkpoints/20260627T170254Z-context-checkpoint-demo.md \
+  --files .agent-crystals/sessions/20260627T171500Z-context-crystal-demo.md \
+  --fail-on-warnings
+```
+
 ## Checkpoint Trail
 
 When `agent-crystallize now --from-checkpoints latest` is used, the generated

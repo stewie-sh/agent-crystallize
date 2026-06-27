@@ -29,7 +29,7 @@ jobs:
         run: |
           tmpdir="$(mktemp -d)"
           git init -q "$tmpdir"
-          node dist/index.js checkpoint \
+          crystal_path="$(node dist/index.js checkpoint \
             --repo "$tmpdir" \
             --project demo \
             --surface cli \
@@ -42,5 +42,7 @@ jobs:
             --test "npm run check passed before smoke." \
             --next-action "Inspect CI result." \
             --evidence "GitHub Actions" \
-            --memory-candidate "Runtime smoke should cover the CLI entrypoint."
+            --memory-candidate "Runtime smoke should cover the CLI entrypoint." \
+            | node -e 'let body = ""; process.stdin.on("data", c => body += c); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).relativePath));')"
           node dist/index.js validate --repo "$tmpdir" --fail-on-warnings
+          node dist/index.js validate --repo "$tmpdir" --files "$crystal_path" --fail-on-warnings

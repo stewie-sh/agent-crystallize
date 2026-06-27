@@ -184,6 +184,7 @@ Validate options:
 ```text
 --repo <path>              Repo to validate; default cwd
 --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
+--files <path>             Validate only this Markdown crystal; repeatable
 --fail-on-warnings         Exit non-zero when warnings are present
 ```
 
