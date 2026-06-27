@@ -1,10 +1,26 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 const args = process.argv.slice(2);
 const command = args.shift();
+
+const requiredSections = [
+  "Header",
+  "Current Focus",
+  "Durable Framing",
+  "Checkpoint Trail",
+  "Decisions",
+  "Findings",
+  "Reality Checks",
+  "Artifacts Changed",
+  "Tests And Verification",
+  "Open Loops",
+  "Memory Candidates",
+  "Next Actions",
+  "Resume Prompt",
+];
 
 try {
   const result = await run(command, args);
@@ -22,6 +38,8 @@ async function run(name: string | undefined, rest: string[]) {
       return crystallize(rest, "crystal");
     case "checkpoint":
       return crystallize(rest, "checkpoint");
+    case "validate":
+      return validate(rest);
     case "help":
     case "--help":
     case "-h":
@@ -107,6 +125,80 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   return result;
 }
 
+function validate(rest: string[]) {
+  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+  const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
+  const failOnWarnings = takeBooleanFlag(rest, "--fail-on-warnings");
+  if (rest.length > 0) {
+    throw new Error(`Unexpected validate arguments: ${rest.join(" ")}`);
+  }
+  if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
+
+  const root = resolve(repo, crystalsDir);
+  const files = existsSync(root) ? listMarkdownFiles(root).sort() : [];
+  const results = files.map((absolutePath) => validateCrystalFile(repo, absolutePath));
+  const errorCount = results.reduce((count, result) => count + result.errors.length, 0);
+  const warningCount = results.reduce((count, result) => count + result.warnings.length, 0);
+  const ok = errorCount === 0 && (!failOnWarnings || warningCount === 0);
+
+  if (!ok) process.exitCode = 1;
+
+  return {
+    ok,
+    repo,
+    crystalsDir,
+    fileCount: results.length,
+    errorCount,
+    warningCount,
+    files: results,
+  };
+}
+
+interface ValidationResult {
+  path: string;
+  kind: "checkpoint" | "session" | "unknown";
+  errors: string[];
+  warnings: string[];
+}
+
+function validateCrystalFile(repo: string, absolutePath: string): ValidationResult {
+  const markdown = readFileSync(absolutePath, "utf8");
+  const path = relative(repo, absolutePath);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const title = extractTitle(markdown);
+
+  if (!title) errors.push("missing top-level title");
+
+  for (const section of requiredSections) {
+    if (!hasSection(markdown, section)) errors.push(`missing section: ${section}`);
+  }
+
+  for (const field of ["Scope", "Project", "Observed at"]) {
+    if (!extractHeaderValue(markdown, field)) errors.push(`missing header field: ${field}`);
+  }
+
+  const currentFocus = extractSection(markdown, "Current Focus") ?? "";
+  if (isTodoOnly(currentFocus)) errors.push("Current Focus is empty or TODO-only");
+
+  for (const section of ["Decisions", "Findings", "Tests And Verification", "Open Loops"]) {
+    const body = extractSection(markdown, section) ?? "";
+    if (isTodoOnly(body)) warnings.push(`${section} is TODO-only`);
+  }
+
+  const resumePrompt = extractSection(markdown, "Resume Prompt") ?? "";
+  if (!resumePrompt.includes(path) && !resumePrompt.includes(basename(path))) {
+    warnings.push("Resume Prompt does not reference this artifact path or filename");
+  }
+
+  return {
+    path,
+    kind: path.includes("/checkpoints/") ? "checkpoint" : path.includes("/sessions/") ? "session" : "unknown",
+    errors,
+    warnings,
+  };
+}
+
 interface GitContext {
   root?: string;
   commit?: string;
@@ -188,8 +280,42 @@ function extractHeaderValue(markdown: string, label: string) {
 
 function extractSection(markdown: string, heading: string) {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = markdown.match(new RegExp(`^## ${escaped}\\s*\\n([\\s\\S]*?)(?=\\n## |\\s*$)`, "m"));
-  return match?.[1]?.trim();
+  const match = new RegExp(`^## ${escaped}\\s*$`, "m").exec(markdown);
+  if (!match) return undefined;
+  const start = match.index + match[0].length;
+  const rest = markdown.slice(start);
+  const nextHeading = rest.search(/\n## /);
+  const section = nextHeading >= 0 ? rest.slice(0, nextHeading) : rest;
+  return section.trim();
+}
+
+function hasSection(markdown: string, heading: string) {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^## ${escaped}\\s*$`, "m").test(markdown);
+}
+
+function isTodoOnly(value: string) {
+  const normalized = value
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/^[-*\d.]+\s*/gm, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  return normalized.length === 0 || normalized.startsWith("todo:");
+}
+
+function listMarkdownFiles(root: string): string[] {
+  const entries = readdirSync(root, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const absolutePath = join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listMarkdownFiles(absolutePath));
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      files.push(absolutePath);
+    }
+  }
+  return files;
 }
 
 function excerpt(value: string, maxLength: number) {
@@ -386,6 +512,7 @@ function usage() {
 Commands:
   agent-crystallize now [options] [summary]
   agent-crystallize checkpoint [options] [summary]
+  agent-crystallize validate [options]
 
 Options:
   --repo <path>              Repo to crystallize; default cwd
@@ -399,5 +526,10 @@ Options:
   --stdin                    Read current focus body from stdin
   --from-checkpoints latest  For 'now': include recent checkpoints as provenance anchors
   --checkpoint-dir <path>    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
+
+Validate options:
+  --repo <path>              Repo to validate; default cwd
+  --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
+  --fail-on-warnings         Exit non-zero when warnings are present
 `);
 }

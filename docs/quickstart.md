@@ -47,6 +47,28 @@ This includes up to five recent checkpoint files as provenance anchors in the
 generated crystal. The crystal should synthesize and deduplicate them; it should
 not restate every checkpoint in full.
 
+## Validate Local Crystals
+
+Run a lightweight quality check before handoff:
+
+```bash
+agent-crystallize validate
+```
+
+Use stricter validation in CI or before public examples:
+
+```bash
+agent-crystallize validate --fail-on-warnings
+```
+
+Validation checks for:
+
+- required sections;
+- key header fields;
+- empty or TODO-only current focus;
+- TODO-heavy decision/finding/open-loop sections;
+- resume prompts that do not point back to the artifact.
+
 ## Suggested Cadence
 
 Checkpoint after:

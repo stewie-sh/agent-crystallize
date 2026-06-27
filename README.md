@@ -65,6 +65,12 @@ agent-crystallize now \
   --body "What changed since the latest checkpoint, current open loops, and next action."
 ```
 
+Validate local crystals before relying on them for handoff:
+
+```bash
+agent-crystallize validate
+```
+
 Default output:
 
 ```text
@@ -113,6 +119,9 @@ agent-crystallize --help
 - decision, finding, open-loop, and next-action sections;
 - a resume prompt for the next agent/session.
 
+`agent-crystallize validate` checks generated artifacts for required sections,
+missing header fields, TODO-only current focus, and TODO-heavy quality warnings.
+
 Git is the provenance backbone. Crystals are the work-memory layer.
 
 Git commits show what changed. Crystals preserve why it mattered, what remains
@@ -132,6 +141,7 @@ default CLI writes local files only.
 ```bash
 agent-crystallize checkpoint [options] [summary]
 agent-crystallize now [options] [summary]
+agent-crystallize validate [options]
 ```
 
 Options:
@@ -148,6 +158,14 @@ Options:
 --stdin                    Read body from stdin
 --from-checkpoints latest  For 'now': include recent checkpoints as provenance anchors
 --checkpoint-dir <path>    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
+```
+
+Validate options:
+
+```text
+--repo <path>              Repo to validate; default cwd
+--crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
+--fail-on-warnings         Exit non-zero when warnings are present
 ```
 
 Read body text from stdin:

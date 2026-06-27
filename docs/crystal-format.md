@@ -34,6 +34,32 @@ Generated artifacts include:
 The initial file is intentionally editable. Fill TODO sections while the session
 context is fresh.
 
+## Validation
+
+Run:
+
+```bash
+agent-crystallize validate
+```
+
+Validation is intentionally simple and local. It checks whether crystals contain
+the expected sections and enough resume-critical content to be useful after
+handoff or compaction.
+
+Errors include:
+
+- missing title;
+- missing required sections;
+- missing key header fields;
+- empty or TODO-only Current Focus.
+
+Warnings include:
+
+- TODO-only Decisions, Findings, Tests And Verification, or Open Loops;
+- Resume Prompt that does not reference the artifact path or filename.
+
+Use `--fail-on-warnings` when validating public examples or release fixtures.
+
 ## Checkpoint Trail
 
 When `agent-crystallize now --from-checkpoints latest` is used, the generated
