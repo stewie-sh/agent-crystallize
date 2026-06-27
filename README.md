@@ -5,6 +5,8 @@ Local-first checkpoints and crystals for long-running AI coding agent sessions.
 Status: private pre-public seed. The npm package is not published yet.
 
 ```text
+Stop compacting. Start crystallizing.
+
 Compaction keeps the model running.
 Crystallization keeps the work recoverable.
 ```
@@ -14,17 +16,76 @@ Claude Code, Cursor, or other coding-agent sessions resume from the actual work
 state: current focus, decisions, evidence, open loops, changed files, and next
 actions.
 
-## Why
+It is the first open-source slice of **Agent Context Crystallization**: the
+practice of turning long-running agent work into durable, provenance-backed
+checkpoints, evidence, open loops, and resume state.
+
+## The Problem
 
 Long-running coding-agent sessions now span hours, many files, multiple tools,
-and multiple compactions. A compacted summary can keep a chat alive, but it often
-loses the details that make engineering work safe to continue.
+and multiple compactions.
 
-`agent-crystallize` gives you explicit save-points:
+Compaction is necessary, but it is lossy. It can keep the chat alive while
+flattening the work:
 
-- `checkpoint`: quick mini-crystallization after decisions, bugs, test results,
-  or implementation slices;
-- `now`: fuller session crystal before handoff, compaction, or session end.
+- the next session remembers the gist but loses the why;
+- decisions survive as vague summaries without evidence;
+- failed paths and edge cases disappear;
+- open loops turn into generic TODOs;
+- each agent spends tokens reloading context that should have been saved.
+
+```text
+The model survives, but the work does not.
+```
+
+## The Workflow
+
+Create frequent checkpoints while the work is active:
+
+```bash
+agent-crystallize checkpoint \
+  --body "Finished auth refactor. Tests pass. Need OAuth replay check next."
+```
+
+Before compaction, handoff, or session end, create a fuller session crystal:
+
+```bash
+agent-crystallize now \
+  --project my-product \
+  --budget standard \
+  --body "Ready to compact. Preserve latest state, open loops, and next action."
+```
+
+If you have been checkpointing throughout the task, roll those checkpoints into
+the session crystal:
+
+```bash
+agent-crystallize now \
+  --from-checkpoints latest \
+  --body "What changed since the latest checkpoint, current open loops, and next action."
+```
+
+Default output:
+
+```text
+.agent-crystals/
+  checkpoints/
+  sessions/
+```
+
+## Why Local First
+
+The first version is intentionally boring infrastructure:
+
+- no account;
+- no login;
+- no network dependency;
+- no hosted database;
+- no server setup;
+- inspectable Markdown files in your repo.
+
+You can commit `.agent-crystals/`, ignore it, archive it, or import it into a
+memory system later. The local artifact is the portable source of continuity.
 
 ## Install
 
@@ -43,54 +104,19 @@ npm install -g @stewie-sh/agent-crystallize
 agent-crystallize --help
 ```
 
-## Quick Start
-
-Create a lightweight checkpoint in the current repo:
-
-```bash
-agent-crystallize checkpoint \
-  --body "Finished auth refactor. Tests pass. Need review of OAuth edge cases."
-```
-
-Create a fuller session crystal:
-
-```bash
-agent-crystallize now \
-  --project my-product \
-  --budget standard \
-  --body "Current focus, decisions, open loops, and next action."
-```
-
-Create a checkpoint-aware session crystal that rolls up recent checkpoints:
-
-```bash
-agent-crystallize now \
-  --from-checkpoints latest \
-  --body "What changed since the latest checkpoint, current open loops, and next action."
-```
-
-Read body text from stdin:
-
-```bash
-cat handoff.md | agent-crystallize checkpoint --stdin
-```
-
-Default output:
-
-```text
-.agent-crystals/
-  checkpoints/
-  sessions/
-```
-
 ## What It Captures
 
 - current focus;
-- decision and finding placeholders;
+- checkpoint trail for session crystals;
 - git commit, branch, status, diff stat, and changed files;
 - detected instruction files such as `AGENTS.md` and `CLAUDE.md`;
-- open-loop and next-action sections;
+- decision, finding, open-loop, and next-action sections;
 - a resume prompt for the next agent/session.
+
+Git is the provenance backbone. Crystals are the work-memory layer.
+
+Git commits show what changed. Crystals preserve why it mattered, what remains
+open, and how to resume.
 
 ## What It Does Not Capture
 
@@ -99,7 +125,7 @@ durable work context: evidence, decisions, findings, open loops, and resume
 state.
 
 It is not a hosted memory service, transcript database, or AI chat product. The
-default CLI writes inspectable local files.
+default CLI writes local files only.
 
 ## Commands
 
@@ -111,20 +137,29 @@ agent-crystallize now [options] [summary]
 Options:
 
 ```text
---repo <path>       Repo to crystallize; default cwd
---out-dir <path>    Output dir relative to repo
---title <title>     Artifact title
---scope <scope>     repo|project|product|cross-project|user|system
---project <slug>    Project/product slug; default repo basename
---budget <mode>     fast|standard|deep
---surface <name>    codex|claude-code|cursor|cli|hook
---body <text>       Current focus body
---stdin             Read body from stdin
---from-checkpoints latest
-                    For 'now': include recent checkpoints as provenance anchors
---checkpoint-dir <path>
-                    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
+--repo <path>              Repo to crystallize; default cwd
+--out-dir <path>           Output dir relative to repo
+--title <title>            Artifact title
+--scope <scope>            repo|project|product|cross-project|user|system
+--project <slug>           Project/product slug; default repo basename
+--budget <mode>            fast|standard|deep
+--surface <name>           codex|claude-code|cursor|cli|hook
+--body <text>              Current focus body
+--stdin                    Read body from stdin
+--from-checkpoints latest  For 'now': include recent checkpoints as provenance anchors
+--checkpoint-dir <path>    Checkpoint dir relative to repo; default .agent-crystals/checkpoints
 ```
+
+Read body text from stdin:
+
+```bash
+cat handoff.md | agent-crystallize checkpoint --stdin
+```
+
+## Examples
+
+- [Basic checkpoint](examples/checkpoint.md)
+- [Compaction recovery flow](examples/compaction-recovery.md)
 
 ## Relationship To Stewie
 
