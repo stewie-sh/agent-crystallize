@@ -24,6 +24,15 @@ It exists to publish:
   "evidence", "decisions", "open loops", and "resume state".
 - Keep storage adapters optional. The default CLI writes local files only.
 
+## Reality And Observability Rule
+
+- This tool is still pre-public and dogfood-stage. Bugs, malformed artifacts,
+  stale assumptions, and awkward output are expected.
+- Early systems are allowed to be imperfect; they are not allowed to be opaque.
+- Preserve enough trace to debug and recover: commands, outputs, generated file
+  paths, commits, CI runs, validation results, and decision rationale.
+- Prefer traceable fixes and regression checks over silent cleanup.
+
 ## Public Surface Guardrails
 
 Before public push, scan tracked files for accidental private material and local
