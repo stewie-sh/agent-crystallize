@@ -11,6 +11,27 @@
    cross-agent handoff, not only syntax.
 5. Prepare the first npm release of `@stewie-sh/agent-crystallize`.
 
+## V0 Product Principle
+
+The first public version should be useful immediately during real agent work.
+The sharpest entry point is the pre-compaction moment: capture the high-signal
+work context before the harness compresses it.
+
+V0 should complement popular coding-agent harnesses rather than replace their
+own compaction or memory behavior:
+
+- preserve raw or lightly structured work memory that would otherwise be lost;
+- capture provenance such as session ids, transcript pointers, commits, and
+  source refs when safe and available;
+- keep decisions, findings, open loops, and resume state inspectable in local
+  Markdown;
+- make post-compaction continuation cheaper by giving the next agent a concrete
+  artifact to read;
+- leave room for richer memory systems to later import crystals and derive
+  higher-level patterns, heuristics, and reusable knowledge.
+
+The goal is practical recovery first, deeper memory synthesis later.
+
 ## Likely Next CLI Work
 
 - `manifest`: index checkpoints/crystals with validation status, scope, project,
