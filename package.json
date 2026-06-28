@@ -11,6 +11,11 @@
     "docs",
     "examples",
     "README.md",
+    "STATUS.md",
+    "ROADMAP.md",
+    "LICENSING.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "scripts": {
@@ -21,6 +26,7 @@
   "keywords": [
     "ai-agents",
     "coding-agents",
+    "context-crystallization",
     "context-engineering",
     "agent-memory",
     "compaction",

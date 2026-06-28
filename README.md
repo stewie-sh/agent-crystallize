@@ -4,6 +4,8 @@ Local-first checkpoints and crystals for long-running AI coding agent sessions.
 
 Status: private pre-public seed. The npm package is not published yet.
 
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 ```text
 Stop compacting. Start crystallizing.
 
@@ -218,12 +220,28 @@ cat handoff.md | agent-crystallize checkpoint --stdin
 - [Compaction recovery flow](examples/compaction-recovery.md)
 - [Strict crystal example](examples/strict-crystal.md)
 
+## Read In This Order
+
+1. [STATUS.md](STATUS.md)
+2. [docs/quickstart.md](docs/quickstart.md)
+3. [docs/crystal-format.md](docs/crystal-format.md)
+4. [ROADMAP.md](ROADMAP.md)
+5. [examples/](examples/)
+6. [CONTRIBUTING.md](CONTRIBUTING.md)
+7. [SECURITY.md](SECURITY.md)
+8. [LICENSING.md](LICENSING.md)
+
 ## Relationship To Stewie
 
 `agent-crystallize` is part of the Stewie open-core ecosystem.
 
 - `agent-crystallize`: local-first checkpoints and crystals for agent work.
 - PBC: open format for product behavior truth.
-- Stewie Reflect: product-facing reflection and owner's-manual workflow.
+- Future Stewie products can import or build on local crystals when a hosted or
+  product-facing workflow is useful.
 
 Created and maintained by Vinh Nguyen / MrWarPro, founder of Stewie.
+
+## License
+
+Apache-2.0. See [LICENSING.md](LICENSING.md) for the repo license mapping.
