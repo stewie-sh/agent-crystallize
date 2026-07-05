@@ -408,8 +408,8 @@ function renderCrystal(input: {
   const currentFocus =
     input.body ||
     (input.checkpointTrail.length > 0
-      ? "No explicit session body was supplied. Use the checkpoint trail below as provenance, then fill in decisions, open loops, and next actions while context is still fresh."
-      : "TODO: Fill in current focus, decisions, open loops, and next action.");
+      ? "No explicit session body was supplied. Use the checkpoint trail below as provenance anchors; inspect source checkpoints for details before acting."
+      : "No explicit current focus body was supplied. Treat this artifact as a structural checkpoint until a richer handoff is written.");
   const noun = input.kind === "checkpoint" ? "checkpoint" : "crystal";
   const sourceWindow = input.kind === "checkpoint" ? "manual mini-crystallization checkpoint" : "manual CLI snapshot";
   return `# ${input.title}
@@ -452,11 +452,11 @@ ${renderSessionProvenance(input.structured.provenance, input.surface)}
 
 ## Decisions
 
-${renderBullets(input.structured.decisions, "TODO: Record decisions with authority and evidence.")}
+${renderBullets(input.structured.decisions, "No separate decisions captured beyond Current Focus.")}
 
 ## Findings
 
-${renderBullets(input.structured.findings, "TODO: Record findings observed from docs, code, runtime, or discussion.")}
+${renderBullets(input.structured.findings, "No separate findings captured beyond Current Focus.")}
 
 ## Reality Checks
 
@@ -494,11 +494,11 @@ ${renderBullets(input.structured.evidence, "(none provided)")}
 
 ## Tests And Verification
 
-${renderBullets(input.structured.tests, "TODO: Record commands run and results.")}
+${renderBullets(input.structured.tests, "No separate verification captured for this artifact.")}
 
 ## Open Loops
 
-${renderBullets(input.structured.openLoops, "TODO: Record blockers, questions, and next verification steps.")}
+${renderBullets(input.structured.openLoops, "No separate open loops captured beyond Next Actions.")}
 
 ## Memory Candidates
 
@@ -507,8 +507,8 @@ ${renderBullets(input.structured.memoryCandidates, "No explicit memory candidate
 ## Next Actions
 
 ${renderNumbered(input.structured.nextActions, [
-  "Review and complete TODO sections while session context is still fresh.",
-  `Import or link this ${noun} from any memory system you trust.`,
+  `Review the source context if this ${noun} needs richer decisions, findings, or verification detail.`,
+  `Import or link this ${noun} from any memory system you trust when useful.`,
   `Use this ${noun} as a resume source after compaction or handoff.`,
 ])}
 
