@@ -2,7 +2,7 @@
 
 Local-first checkpoints and crystals for long-running AI coding agent sessions.
 
-Status: private pre-public seed. The npm package is not published yet.
+Status: public seed / first npm release candidate.
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
@@ -144,19 +144,19 @@ memory system later. The local artifact is the portable source of continuity.
 
 ## Install
 
-This package is not published yet. For local development:
+Install globally with npm:
+
+```bash
+npm install -g @stewie-sh/agent-crystallize
+agent-crystallize --help
+```
+
+For local development from a checkout:
 
 ```bash
 npm install
 npm run build
 node dist/index.js --help
-```
-
-When published:
-
-```bash
-npm install -g @stewie-sh/agent-crystallize
-agent-crystallize --help
 ```
 
 ## What It Captures

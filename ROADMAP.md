@@ -11,7 +11,7 @@
    cross-agent handoff, not only syntax.
 5. Keep hook automation local-first and experimental while Codex and Claude Code
    adapters mature.
-6. Prepare the first npm release of `@stewie-sh/agent-crystallize`.
+6. Publish the first npm release of `@stewie-sh/agent-crystallize`.
 
 ## V0 Product Principle
 

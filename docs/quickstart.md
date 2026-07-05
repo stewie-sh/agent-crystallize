@@ -1,7 +1,6 @@
 # Quickstart
 
-The package is not published yet. From a local checkout, replace
-`agent-crystallize` with `npm run dev --`:
+From a local checkout, replace `agent-crystallize` with `npm run dev --`:
 
 ```bash
 npm install
@@ -9,8 +8,7 @@ npm run build
 npm run dev -- --help
 ```
 
-After publication, the examples below can be run with the installed
-`agent-crystallize` binary.
+The examples below use the installed `agent-crystallize` binary.
 
 ## Create A Checkpoint
 

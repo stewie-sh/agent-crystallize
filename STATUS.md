@@ -2,7 +2,7 @@
 
 **Repo:** `agent-crystallize`  
 **Package:** `@stewie-sh/agent-crystallize`  
-**Phase:** private pre-public seed  
+**Phase:** public seed / first npm release candidate  
 **Date:** July 2026
 
 ## Current State
@@ -20,7 +20,7 @@ Crystallization:
 - an experimental local-first hook runner for Codex and Claude Code lifecycle
   events.
 
-The package is not published to npm yet.
+The package is ready for the first npm publication after release approval.
 
 ## What Is Stable Enough To Review
 
@@ -47,7 +47,7 @@ The package is not published to npm yet.
 - The relationship between local artifacts and optional future import/sync
   adapters.
 - The hook installer/plugin story for Codex and Claude Code.
-- The first npm release version and release checklist.
+- Post-release feedback from real Codex and Claude Code hook usage.
 
 ## What Is Intentionally Missing Here
 
