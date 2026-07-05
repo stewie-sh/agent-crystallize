@@ -1,0 +1,68 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-crystallize hook --harness codex --event SessionStart",
+            "timeout": 30,
+            "statusMessage": "Loading local crystallized context"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-crystallize hook --harness codex --event PostToolUse",
+            "timeout": 10,
+            "statusMessage": "Marking context activity"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-crystallize hook --harness codex --event PreCompact --strict-precompact",
+            "timeout": 45,
+            "statusMessage": "Checkpointing before compaction"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-crystallize hook --harness codex --event PostCompact",
+            "timeout": 30,
+            "statusMessage": "Recording compact summary"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-crystallize hook --harness codex --event Stop",
+            "timeout": 30,
+            "statusMessage": "Checking local checkpoint state"
+          }
+        ]
+      }
+    ]
+  }
+}
