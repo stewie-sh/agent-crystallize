@@ -1,12 +1,28 @@
 # Quickstart
 
+The package is not published yet. From a local checkout, replace
+`agent-crystallize` with `npm run dev --`:
+
+```bash
+npm install
+npm run build
+npm run dev -- --help
+```
+
+After publication, the examples below can be run with the installed
+`agent-crystallize` binary.
+
 ## Create A Checkpoint
 
 Use checkpoints as mini-crystallizations during long-running work:
 
 ```bash
 agent-crystallize checkpoint \
-  --body "Implemented payment callback parsing. Build passes. Need webhook replay test next."
+  --body "Implemented payment callback parsing. Build passes. Need webhook replay test next." \
+  --topic "payment-callbacks" \
+  --decision "Keep callback parsing strict for this slice." \
+  --test "npm run check passed." \
+  --next-action "Run webhook replay test."
 ```
 
 This writes a Markdown file under:
@@ -114,6 +130,14 @@ Run a lightweight quality check before handoff:
 agent-crystallize validate
 ```
 
+Validate the sanitized public fixture without reading private local crystals:
+
+```bash
+agent-crystallize validate \
+  --files examples/sanitized-session-crystal.md \
+  --fail-on-warnings
+```
+
 Use stricter validation in CI or before public examples:
 
 ```bash
@@ -151,3 +175,28 @@ Checkpoint after:
 
 Do not wait until the context window is nearly full. Checkpoints bound the amount
 of work lost to unexpected compaction.
+
+## Public Examples Versus Local Dogfood
+
+Generated `.agent-crystals/` files often contain real work context, local paths,
+session pointers, and rough notes. Keep them local unless you have intentionally
+sanitized them.
+
+For this public repo, the default strategy is:
+
+- keep `.agent-crystals/` ignored;
+- commit sanitized examples under `examples/`;
+- validate any committed full crystal fixture with `--fail-on-warnings`;
+- avoid private transcripts, customer data, internal strategy, credentials, and
+  hosted-memory or billing claims in public examples.
+
+## Optional Hook Automation
+
+Manual checkpoints are the safest starting point. Once you trust the local
+artifact flow, `agent-crystallize hook` can automate lightweight lifecycle
+capture for Codex and Claude Code.
+
+Start with [docs/hooks.md](hooks.md). The hook runner is local-first by default:
+it writes `.agent-crystals/`, stores dedupe/activity state under
+`~/.agent-crystallize/hooks`, and does not require mind-core or any hosted
+service.

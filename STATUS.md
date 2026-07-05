@@ -3,7 +3,7 @@
 **Repo:** `agent-crystallize`  
 **Package:** `@stewie-sh/agent-crystallize`  
 **Phase:** private pre-public seed  
-**Date:** June 2026
+**Date:** July 2026
 
 ## Current State
 
@@ -15,7 +15,10 @@ Crystallization:
 - structured sections for decisions, findings, open loops, evidence, and resume
   state;
 - validation for generated artifacts;
-- public examples and docs for coding-agent handoff and compaction recovery.
+- public examples and docs for coding-agent handoff, compaction recovery, and
+  the Agent Context Crystallization category.
+- an experimental local-first hook runner for Codex and Claude Code lifecycle
+  events.
 
 The package is not published to npm yet.
 
@@ -31,14 +34,19 @@ The package is not published to npm yet.
 - The public vocabulary around durable work context, evidence, decisions, open
   loops, and resume state.
 - The safety boundary: this tool does not preserve hidden chain-of-thought.
+- The public artifact strategy: generated `.agent-crystals/` files are local
+  by default; sanitized fixtures belong under `examples/`.
+- The hook boundary: hooks reduce manual checkpointing burden, but generated
+  artifacts remain local/private-by-default.
 
 ## What Is Still Draft
 
 - The exact long-term artifact schema.
-- The validation profile and strictness level for public examples.
+- The validation profile and strictness level for generated artifacts.
 - The best default cadence for checkpoints during long-running agent work.
 - The relationship between local artifacts and optional future import/sync
   adapters.
+- The hook installer/plugin story for Codex and Claude Code.
 - The first npm release version and release checklist.
 
 ## What Is Intentionally Missing Here

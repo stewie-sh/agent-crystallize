@@ -25,6 +25,35 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: Validate public crystal fixture
+        run: node dist/index.js validate --files examples/sanitized-session-crystal.md --fail-on-warnings
+
+      - name: Hook smoke
+        run: |
+          tmpdir="$(mktemp -d)"
+          statedir="$(mktemp -d)"
+          git init -q "$tmpdir"
+          printf '{"cwd":"%s","hook_event_name":"SessionStart","session_id":"ci-session"}' "$tmpdir" \
+            | node dist/index.js hook --repo "$tmpdir" --state-dir "$statedir" --harness codex --event SessionStart \
+            | grep -q "agent-crystallize bootstrap"
+          printf '{"cwd":"%s","hook_event_name":"PreCompact","trigger":"manual","session_id":"ci-session"}' "$tmpdir" \
+            | node dist/index.js hook --repo "$tmpdir" --state-dir "$statedir" --harness codex --event PreCompact --strict-precompact
+          before_count="$(find "$tmpdir/.agent-crystals/checkpoints" -type f | wc -l)"
+          printf '{"cwd":"%s","hook_event_name":"PostCompact","trigger":"manual","compact_summary":"CI compact summary"}' "$tmpdir" \
+            | node dist/index.js hook --repo "$tmpdir" --state-dir "$statedir" --harness codex --event PostCompact
+          after_count="$(find "$tmpdir/.agent-crystals/checkpoints" -type f | wc -l)"
+          test "$before_count" = "$after_count"
+          node dist/index.js validate --repo "$tmpdir" --fail-on-warnings
+
+      - name: Manifest smoke
+        run: |
+          tmpdir="$(mktemp -d)"
+          git init -q "$tmpdir"
+          first_path="$(node dist/index.js checkpoint --repo "$tmpdir" --project demo --body "Intermediate checkpoint." --decision "Temporary decision." --finding "Intermediate finding." --open-loop "Roll into session crystal." --test "Manifest smoke setup." --next-action "Create superseding crystal." | node -e 'let body = ""; process.stdin.on("data", c => body += c); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).relativePath));')"
+          node dist/index.js now --repo "$tmpdir" --project demo --body "Session crystal supersedes the intermediate checkpoint." --relation "supersedes:$first_path" --decision "Session crystal is the resume source." --finding "Intermediate checkpoint remains trace only." --open-loop "None for smoke." --test "Manifest smoke setup." --next-action "Use active artifact from manifest."
+          node dist/index.js manifest --repo "$tmpdir" --include-superseded --write \
+            | node -e 'let body = ""; process.stdin.on("data", c => body += c); process.stdin.on("end", () => { const m = JSON.parse(body); if (m.activeCount !== 1 || m.supersededCount !== 1 || !m.supersededArtifacts?.length) process.exit(1); });'
+
       - name: Smoke
         run: |
           tmpdir="$(mktemp -d)"

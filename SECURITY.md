@@ -24,6 +24,11 @@ Current default behavior:
 Generated artifacts are written under `.agent-crystals/` by default. Review them
 before committing or sharing.
 
+Hook automation can create artifacts without an explicit manual checkpoint
+command. Hook-created artifacts may include local repo paths, git state, session
+ids, compact summaries, and work context from the active session. Keep generated
+`.agent-crystals/` ignored unless the files have been reviewed and sanitized.
+
 ## Sensitive Material
 
 Do not include secrets, access tokens, private customer data, proprietary

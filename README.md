@@ -93,6 +93,41 @@ Default output:
   sessions/
 ```
 
+## Five-Minute Useful Path
+
+Until the package is published, run the CLI from a local checkout:
+
+```bash
+npm install
+npm run build
+npm run dev -- checkpoint \
+  --body "Finished the launch-readiness pass. Build passes. Need public scan next." \
+  --topic "launch-readiness" \
+  --decision "Keep generated dogfood artifacts local unless they are sanitized examples." \
+  --test "npm run check passed." \
+  --next-action "Run npm pack --dry-run and scan tracked files before release."
+```
+
+Before ending the session, roll the recent checkpoints into a session crystal:
+
+```bash
+npm run dev -- now \
+  --from-checkpoints latest \
+  --body "Ready to hand off. Preserve current focus, decisions, verification, open loops, and next action." \
+  --topic "agent-context-crystallization"
+```
+
+Then validate what you plan to rely on:
+
+```bash
+npm run dev -- validate
+```
+
+Generated `.agent-crystals/` files are local work artifacts by default. This repo
+keeps them ignored so private dogfood traces do not become public accidentally.
+Public dogfood material should be represented as sanitized Markdown under
+`examples/`.
+
 ## Why Local First
 
 The first version is intentionally boring infrastructure:
@@ -159,6 +194,8 @@ default CLI writes local files only.
 agent-crystallize checkpoint [options] [summary]
 agent-crystallize now [options] [summary]
 agent-crystallize validate [options]
+agent-crystallize manifest [options]
+agent-crystallize hook [options]
 ```
 
 Options:
@@ -208,6 +245,29 @@ Validate options:
 --fail-on-warnings         Exit non-zero when warnings are present
 ```
 
+Manifest options:
+
+```text
+--repo <path>              Repo to index; default cwd
+--crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
+--include-superseded       Include superseded artifacts in JSON output
+--write                    Write .agent-crystals/manifest.json
+```
+
+Hook options:
+
+```text
+--repo <path>                    Repo for local hook artifacts; default cwd or hook stdin cwd
+--harness <name>                 codex|claude-code|hook; default hook stdin harness or hook
+--event <name>                   SessionStart|UserPromptSubmit|PostToolUse|PostToolBatch|PreCompact|PostCompact|Stop
+--state-dir <path>               User-level hook state dir; default ~/.agent-crystallize/hooks
+--stop-checkpoint-ms <ms>        Stop cadence threshold; default 1500000
+--dedupe-window-ms <ms>          SessionStart/PostCompact dedupe window; default 600000
+--max-pointers <count>           SessionStart local artifact pointers; default 3
+--strict-precompact              Exit non-zero if PreCompact checkpoint fails
+--include-transcript-uri         Include transcript_path from hook stdin when supplied
+```
+
 Read body text from stdin:
 
 ```bash
@@ -219,17 +279,22 @@ cat handoff.md | agent-crystallize checkpoint --stdin
 - [Basic checkpoint](examples/checkpoint.md)
 - [Compaction recovery flow](examples/compaction-recovery.md)
 - [Strict crystal example](examples/strict-crystal.md)
+- [Sanitized session crystal fixture](examples/sanitized-session-crystal.md)
+- [Agent Context Crystallization manifesto](docs/manifesto.md)
+- [Hook automation guide](docs/hooks.md)
 
 ## Read In This Order
 
 1. [STATUS.md](STATUS.md)
 2. [docs/quickstart.md](docs/quickstart.md)
 3. [docs/crystal-format.md](docs/crystal-format.md)
-4. [ROADMAP.md](ROADMAP.md)
-5. [examples/](examples/)
-6. [CONTRIBUTING.md](CONTRIBUTING.md)
-7. [SECURITY.md](SECURITY.md)
-8. [LICENSING.md](LICENSING.md)
+4. [docs/manifesto.md](docs/manifesto.md)
+5. [docs/hooks.md](docs/hooks.md)
+6. [ROADMAP.md](ROADMAP.md)
+7. [examples/](examples/)
+8. [CONTRIBUTING.md](CONTRIBUTING.md)
+9. [SECURITY.md](SECURITY.md)
+10. [LICENSING.md](LICENSING.md)
 
 ## Relationship To Stewie
 
@@ -237,8 +302,8 @@ cat handoff.md | agent-crystallize checkpoint --stdin
 
 - `agent-crystallize`: local-first checkpoints and crystals for agent work.
 - PBC: open format for product behavior truth.
-- Future Stewie products can import or build on local crystals when a hosted or
-  product-facing workflow is useful.
+- Other tools can import or build on local crystals when that is useful, but
+  this package stays local-file-only by default.
 
 Created and maintained by Vinh Nguyen / MrWarPro, founder of Stewie.
 

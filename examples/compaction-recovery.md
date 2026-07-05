@@ -57,6 +57,10 @@ Read AGENTS.md if present, then read the latest session crystal under
 Resume from Current Focus, Checkpoint Trail, Open Loops, and Next Actions.
 ```
 
+For a public repo, keep the generated `.agent-crystals/` output local unless it
+has been sanitized. Commit full examples under `examples/`, such as
+`examples/sanitized-session-crystal.md`, when you want a shareable fixture.
+
 ## What This Preserves
 
 The goal is not to keep every token from the prior chat. The goal is to preserve

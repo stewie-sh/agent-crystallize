@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, fstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -22,6 +24,8 @@ const requiredSections = [
   "Resume Prompt",
 ];
 
+const hookEvents = ["SessionStart", "UserPromptSubmit", "PostToolUse", "PostToolBatch", "PreCompact", "PostCompact", "Stop"] as const;
+
 try {
   const result = await run(command, args);
   if (result !== undefined) {
@@ -40,6 +44,10 @@ async function run(name: string | undefined, rest: string[]) {
       return crystallize(rest, "checkpoint");
     case "validate":
       return validate(rest);
+    case "manifest":
+      return manifest(rest);
+    case "hook":
+      return hook(rest);
     case "help":
     case "--help":
     case "-h":
@@ -52,6 +60,43 @@ async function run(name: string | undefined, rest: string[]) {
 }
 
 type ArtifactKind = "crystal" | "checkpoint";
+
+type HookEvent = (typeof hookEvents)[number];
+
+interface HookState {
+  projects: Record<string, HookProjectState>;
+}
+
+interface HookProjectState {
+  cwd: string;
+  lastActivityAt?: string;
+  lastActivityEvent?: string;
+  lastCheckpointAt?: string;
+  lastCheckpointPath?: string;
+  lastCheckpointEvent?: string;
+  lastPreCompactAt?: string;
+  lastSessionStartAt?: string;
+  lastInjectedContextHash?: string;
+  lastInjectedContextAt?: string;
+}
+
+interface ArtifactRecord {
+  path: string;
+  kind: "checkpoint" | "session" | "unknown";
+  title: string;
+  observedAt?: string;
+  project?: string;
+  scope?: string;
+  topics: string[];
+  relations: RelationHint[];
+  currentFocus: string;
+  mtime: string;
+  validation: {
+    errors: string[];
+    warnings: string[];
+  };
+  supersededBy: string[];
+}
 
 async function crystallize(rest: string[], kind: ArtifactKind) {
   const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
@@ -127,6 +172,335 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   return result;
 }
 
+async function hook(rest: string[]) {
+  const input = readJsonStdinIfAvailable();
+  const repo = resolve(takeFlag(rest, "--repo") ?? stringField(input, "cwd") ?? process.cwd());
+  const harness = takeFlag(rest, "--harness") ?? stringField(input, "harness") ?? "hook";
+  const event = (takeFlag(rest, "--event") ?? stringField(input, "hook_event_name") ?? stringField(input, "event") ?? "SessionStart") as HookEvent;
+  const stateDir = resolve(takeFlag(rest, "--state-dir") ?? join(homedir(), ".agent-crystallize", "hooks"));
+  const stopCheckpointMs = Number(takeFlag(rest, "--stop-checkpoint-ms") ?? 25 * 60 * 1000);
+  const dedupeWindowMs = Number(takeFlag(rest, "--dedupe-window-ms") ?? 10 * 60 * 1000);
+  const strictPrecompact = takeBooleanFlag(rest, "--strict-precompact");
+  const maxPointers = Number(takeFlag(rest, "--max-pointers") ?? 3);
+  const includeTranscriptUri = takeBooleanFlag(rest, "--include-transcript-uri");
+  if (rest.length > 0) {
+    throw new Error(`Unexpected hook arguments: ${rest.join(" ")}`);
+  }
+  if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
+  if (!Number.isFinite(stopCheckpointMs) || stopCheckpointMs < 0) throw new Error("--stop-checkpoint-ms must be a non-negative number.");
+  if (!Number.isFinite(dedupeWindowMs) || dedupeWindowMs < 0) throw new Error("--dedupe-window-ms must be a non-negative number.");
+  if (!Number.isFinite(maxPointers) || maxPointers < 1) throw new Error("--max-pointers must be a positive number.");
+  if (!isHookEvent(event)) throw new Error(`Invalid --event ${event}; expected one of ${hookEvents.join(", ")}.`);
+
+  const statePath = join(stateDir, "state.json");
+  const state = loadHookState(statePath);
+  const key = stableKey(repo);
+  const projectState = state.projects[key] ?? { cwd: repo };
+  projectState.cwd = repo;
+
+  const save = () => {
+    state.projects[key] = projectState;
+    saveHookState(statePath, state);
+  };
+
+  switch (event) {
+    case "SessionStart": {
+      const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs);
+      const fullContextHash = stableKey(context.fullContext);
+      projectState.lastSessionStartAt = new Date().toISOString();
+      projectState.lastInjectedContextHash = fullContextHash;
+      projectState.lastInjectedContextAt = new Date().toISOString();
+      save();
+      outputHookContext(harness, context.output);
+      return undefined;
+    }
+    case "UserPromptSubmit": {
+      projectState.lastActivityAt = new Date().toISOString();
+      projectState.lastActivityEvent = event;
+      save();
+      return undefined;
+    }
+    case "PostToolUse":
+    case "PostToolBatch": {
+      projectState.lastActivityAt = new Date().toISOString();
+      projectState.lastActivityEvent = event;
+      save();
+      return undefined;
+    }
+    case "PreCompact": {
+      try {
+        const checkpoint = await createHookCheckpoint({
+          repo,
+          harness,
+          event,
+          input,
+          includeTranscriptUri,
+          body: [
+            "Pre-compact checkpoint requested by lifecycle hook.",
+            `Trigger: ${stringField(input, "trigger") ?? "unknown"}.`,
+            stringField(input, "custom_instructions")
+              ? `Custom compact instructions: ${excerpt(stringField(input, "custom_instructions") ?? "", 1000)}.`
+              : undefined,
+            `Last activity: ${projectState.lastActivityAt ?? "unknown"}.`,
+            "Purpose: preserve high-signal work state before lossy context compaction.",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          decision: "PreCompact is a lifecycle boundary; write a local checkpoint before compaction proceeds.",
+          finding: "Hook-created checkpoints are local-first artifacts and do not require mind-core.",
+          openLoop: "After compaction, resume from the latest local checkpoint or session crystal before acting.",
+          nextAction: "Read the latest checkpoint under .agent-crystals/checkpoints/ after compaction.",
+        });
+        projectState.lastCheckpointAt = new Date().toISOString();
+        projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
+        projectState.lastCheckpointEvent = event;
+        projectState.lastPreCompactAt = projectState.lastCheckpointAt;
+        save();
+      } catch (error) {
+        save();
+        if (strictPrecompact) {
+          throw error;
+        }
+        process.stderr.write(`agent-crystallize hook PreCompact checkpoint failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+      return undefined;
+    }
+    case "PostCompact": {
+      const lastPreCompact = projectState.lastPreCompactAt ? Date.parse(projectState.lastPreCompactAt) : 0;
+      if (lastPreCompact > 0 && Date.now() - lastPreCompact <= dedupeWindowMs) {
+        projectState.lastActivityAt = new Date().toISOString();
+        projectState.lastActivityEvent = event;
+        save();
+        return undefined;
+      }
+      const compactSummary = stringField(input, "compact_summary") ?? "";
+      const checkpoint = await createHookCheckpoint({
+        repo,
+        harness,
+        event,
+        input,
+        includeTranscriptUri,
+        body: [
+          "Post-compact summary captured by lifecycle hook.",
+          `Trigger: ${stringField(input, "trigger") ?? "unknown"}.`,
+          compactSummary ? `Compact summary: ${excerpt(compactSummary, 2000)}` : "No compact_summary field was supplied.",
+        ].join("\n"),
+        decision: "PostCompact summaries are evidence, not the sole source of truth.",
+        finding: "No recent PreCompact checkpoint was recorded, so PostCompact wrote a local checkpoint.",
+        openLoop: "Verify whether important decisions survived compaction before continuing.",
+        nextAction: "Read the PostCompact checkpoint and inspect changed files before acting.",
+      });
+      projectState.lastCheckpointAt = new Date().toISOString();
+      projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
+      projectState.lastCheckpointEvent = event;
+      save();
+      return undefined;
+    }
+    case "Stop": {
+      const lastActivity = projectState.lastActivityAt ? Date.parse(projectState.lastActivityAt) : 0;
+      const lastCheckpoint = projectState.lastCheckpointAt ? Date.parse(projectState.lastCheckpointAt) : 0;
+      if (lastActivity > lastCheckpoint && Date.now() - lastCheckpoint >= stopCheckpointMs) {
+        const checkpoint = await createHookCheckpoint({
+          repo,
+          harness,
+          event,
+          input,
+          includeTranscriptUri,
+          body: [
+            "Stop hook created a cadence checkpoint after sustained uncheckpointed activity.",
+            `Last activity: ${projectState.lastActivityAt ?? "unknown"}.`,
+            `Last activity event: ${projectState.lastActivityEvent ?? "unknown"}.`,
+            "This checkpoint is a fallback, not a substitute for explicit high-signal crystallization.",
+          ].join("\n"),
+          decision: "Stop hooks should checkpoint only as a cadence fallback.",
+          finding: "There was activity after the latest checkpoint and the checkpoint interval elapsed.",
+          openLoop: "Review whether this fallback checkpoint needs a richer session crystal.",
+          nextAction: "If ending the task, create a fuller session crystal with agent-crystallize now.",
+        });
+        projectState.lastCheckpointAt = new Date().toISOString();
+        projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
+        projectState.lastCheckpointEvent = event;
+      }
+      save();
+      return undefined;
+    }
+    default:
+      save();
+      return undefined;
+  }
+}
+
+async function createHookCheckpoint(input: {
+  repo: string;
+  harness: string;
+  event: HookEvent;
+  input: Record<string, unknown>;
+  includeTranscriptUri: boolean;
+  body: string;
+  decision: string;
+  finding: string;
+  openLoop: string;
+  nextAction: string;
+}) {
+  const project = basename(input.repo) || "project";
+  const args = [
+    "--repo",
+    input.repo,
+    "--scope",
+    "project",
+    "--project",
+    project,
+    "--budget",
+    "fast",
+    "--title",
+    `${input.event} checkpoint - ${project} - ${formatDate(new Date())}`,
+    "--surface",
+    input.harness,
+    "--agent-body",
+    input.harness,
+    "--harness",
+    input.harness,
+    "--provenance",
+    `hook_event=${input.event}`,
+    "--topic",
+    "agent-context-crystallization",
+    "--topic",
+    "context-persistence",
+    "--decision",
+    input.decision,
+    "--finding",
+    input.finding,
+    "--open-loop",
+    input.openLoop,
+    "--test",
+    "agent-crystallize hook command completed.",
+    "--next-action",
+    input.nextAction,
+    "--evidence",
+    `hook_event:${input.event}`,
+    "--memory-candidate",
+    "Lifecycle hooks should reduce human checkpointing burden while keeping generated artifacts local-first.",
+  ];
+  const sessionId = stringField(input.input, "session_id") ?? stringField(input.input, "sessionId");
+  if (sessionId) args.push("--session-id", sessionId);
+  const transcriptUri = stringField(input.input, "transcript_path") ?? stringField(input.input, "transcriptUri");
+  if (input.includeTranscriptUri && transcriptUri) args.push("--transcript-uri", transcriptUri);
+  args.push("--body", input.body);
+  return crystallize(args, "checkpoint");
+}
+
+function readJsonStdinIfAvailable(): Record<string, unknown> {
+  try {
+    const stat = fstatSync(0);
+    if (!stat.isFIFO() && !stat.isFile()) return {};
+    const raw = readFileSync(0, "utf8").trim();
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function loadHookState(path: string): HookState {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" && parsed.projects && typeof parsed.projects === "object" ? parsed : { projects: {} };
+  } catch {
+    return { projects: {} };
+  }
+}
+
+function saveHookState(path: string, state: HookState) {
+  mkdirSync(resolve(path, ".."), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  renameSync(tmp, path);
+}
+
+function renderSessionStartContext(
+  repo: string,
+  harness: string,
+  state: HookProjectState,
+  maxPointers: number,
+  dedupeWindowMs: number,
+) {
+  const activeArtifacts = collectArtifactRecords(repo, ".agent-crystals").filter((record) => record.supersededBy.length === 0);
+  const sessions = activeArtifacts.filter((record) => record.kind === "session").slice(0, maxPointers);
+  const checkpoints = activeArtifacts.filter((record) => record.kind === "checkpoint").slice(0, maxPointers);
+  const lines = [
+    "agent-crystallize bootstrap:",
+    `- Repo: ${repo}`,
+    "- Local crystals are work context, not hidden chain-of-thought.",
+    "- Before acting after a fresh/resumed/compacted session, inspect the latest relevant local artifacts.",
+  ];
+  if (sessions.length > 0) {
+    lines.push("- Latest session crystals:");
+    for (const item of sessions) lines.push(`  - ${item.path} (${item.observedAt ?? item.mtime})`);
+  }
+  if (checkpoints.length > 0) {
+    lines.push("- Latest checkpoints:");
+    for (const item of checkpoints) lines.push(`  - ${item.path} (${item.observedAt ?? item.mtime})`);
+  }
+  if (sessions.length === 0 && checkpoints.length === 0) {
+    lines.push("- No local .agent-crystals artifacts were found for this repo yet.");
+  }
+  lines.push("- If mind-core or another memory layer is configured by your harness, use it as an optional pointer/index layer; agent-crystallize remains the local artifact writer.");
+  const fullContext = lines.join("\n");
+  const currentHash = stableKey(fullContext);
+  const lastInjectedAt = state.lastInjectedContextAt ? Date.parse(state.lastInjectedContextAt) : 0;
+  const shouldDedupe =
+    state.lastInjectedContextHash === currentHash &&
+    lastInjectedAt > 0 &&
+    Date.now() - lastInjectedAt <= dedupeWindowMs;
+  const output = shouldDedupe
+    ? [
+        "agent-crystallize bootstrap:",
+        "- Local checkpoint pointers are unchanged since the recent SessionStart bootstrap.",
+        sessions[0] ? `- Latest session crystal: ${sessions[0].path}` : undefined,
+        checkpoints[0] ? `- Latest checkpoint: ${checkpoints[0].path}` : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : fullContext;
+  return { output, fullContext };
+}
+
+function outputHookContext(harness: string, context: string) {
+  if (harness === "claude-code") {
+    process.stdout.write(
+      `${JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: context,
+        },
+        suppressOutput: true,
+      })}\n`,
+    );
+    return;
+  }
+  process.stdout.write(`${context}\n`);
+}
+
+function stableKey(value: string) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function isHookEvent(value: string): value is HookEvent {
+  return (hookEvents as readonly string[]).includes(value);
+}
+
+function stringField(input: Record<string, unknown>, key: string) {
+  const value = input[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function stringRecordField(input: unknown, key: string) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const value = (input as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
 function validate(rest: string[]) {
   const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
   const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
@@ -161,6 +535,115 @@ function validate(rest: string[]) {
     warningCount,
     files: results,
   };
+}
+
+function manifest(rest: string[]) {
+  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+  const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
+  const includeSuperseded = takeBooleanFlag(rest, "--include-superseded");
+  const write = takeBooleanFlag(rest, "--write");
+  if (rest.length > 0) {
+    throw new Error(`Unexpected manifest arguments: ${rest.join(" ")}`);
+  }
+  if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
+
+  const generatedAt = new Date().toISOString();
+  const records = collectArtifactRecords(repo, crystalsDir);
+  const activeArtifacts = records.filter((record) => record.supersededBy.length === 0);
+  const supersededArtifacts = records.filter((record) => record.supersededBy.length > 0);
+  const output = {
+    generatedAt,
+    repo,
+    crystalsDir,
+    artifactCount: records.length,
+    activeCount: activeArtifacts.length,
+    supersededCount: supersededArtifacts.length,
+    activeArtifacts,
+    supersededArtifacts: includeSuperseded ? supersededArtifacts : undefined,
+  };
+
+  if (write) {
+    const manifestPath = resolve(repo, crystalsDir, "manifest.json");
+    mkdirSync(resolve(manifestPath, ".."), { recursive: true });
+    writeFileSync(manifestPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
+    return { ...output, path: manifestPath, relativePath: relative(repo, manifestPath) };
+  }
+  return output;
+}
+
+function collectArtifactRecords(repo: string, crystalsDir: string): ArtifactRecord[] {
+  const root = resolve(repo, crystalsDir);
+  const files = existsSync(root) ? listMarkdownFiles(root).sort() : [];
+  const records = files.map((absolutePath) => artifactRecordFromFile(repo, absolutePath));
+  const supersededBy = new Map<string, string[]>();
+  const pathAliases = new Map<string, string>();
+  for (const record of records) {
+    pathAliases.set(record.path, record.path);
+    pathAliases.set(`./${record.path}`, record.path);
+    pathAliases.set(basename(record.path), record.path);
+  }
+  for (const record of records) {
+    for (const relation of record.relations) {
+      if (relation.type !== "supersedes") continue;
+      const target = pathAliases.get(relation.target) ?? pathAliases.get(relation.target.replace(/^\.\//, ""));
+      if (!target) continue;
+      const superseders = supersededBy.get(target) ?? [];
+      superseders.push(record.path);
+      supersededBy.set(target, superseders);
+    }
+  }
+  for (const record of records) {
+    record.supersededBy = supersededBy.get(record.path) ?? [];
+  }
+  return records.sort((a, b) => {
+    const byObserved = (b.observedAt ?? b.mtime).localeCompare(a.observedAt ?? a.mtime);
+    return byObserved || a.path.localeCompare(b.path);
+  });
+}
+
+function artifactRecordFromFile(repo: string, absolutePath: string): ArtifactRecord {
+  const markdown = readFileSync(absolutePath, "utf8");
+  const path = relative(repo, absolutePath);
+  const validation = validateCrystalFile(repo, absolutePath);
+  return {
+    path,
+    kind: validation.kind,
+    title: extractTitle(markdown) ?? basename(path),
+    observedAt: extractHeaderValue(markdown, "Observed at"),
+    project: extractHeaderValue(markdown, "Project"),
+    scope: extractHeaderValue(markdown, "Scope"),
+    topics: extractBullets(extractSection(markdown, "Topics") ?? "").filter((item) => !item.toLowerCase().startsWith("no explicit topics")),
+    relations: extractRelations(extractSection(markdown, "Relation Hints") ?? ""),
+    currentFocus: excerpt(extractSection(markdown, "Current Focus") ?? "", 300),
+    mtime: new Date(statSync(absolutePath).mtimeMs).toISOString(),
+    validation: {
+      errors: validation.errors,
+      warnings: validation.warnings,
+    },
+    supersededBy: [],
+  };
+}
+
+function extractBullets(section: string) {
+  return section
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).trim())
+    .filter(Boolean);
+}
+
+function extractRelations(section: string): RelationHint[] {
+  return extractBullets(section)
+    .map((item) => {
+      const separator = item.indexOf(":");
+      if (separator <= 0 || separator === item.length - 1) return undefined;
+      return {
+        type: item.slice(0, separator).trim(),
+        target: item.slice(separator + 1).trim(),
+      };
+    })
+    .filter((item): item is RelationHint => Boolean(item));
 }
 
 interface ValidationResult {
@@ -715,6 +1198,8 @@ Commands:
   agent-crystallize now [options] [summary]
   agent-crystallize checkpoint [options] [summary]
   agent-crystallize validate [options]
+  agent-crystallize manifest [options]
+  agent-crystallize hook [options]
 
 Options:
   --repo <path>              Repo to crystallize; default cwd
@@ -756,5 +1241,22 @@ Validate options:
   --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
   --files <path>             Validate only this Markdown crystal; repeatable
   --fail-on-warnings         Exit non-zero when warnings are present
+
+Manifest options:
+  --repo <path>              Repo to index; default cwd
+  --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
+  --include-superseded       Include superseded artifacts in JSON output
+  --write                    Write .agent-crystals/manifest.json
+
+Hook options:
+  --repo <path>                    Repo for local hook artifacts; default cwd or hook stdin cwd
+  --harness <name>                 codex|claude-code|hook; default hook stdin harness or hook
+  --event <name>                   SessionStart|UserPromptSubmit|PostToolUse|PostToolBatch|PreCompact|PostCompact|Stop
+  --state-dir <path>               User-level hook state dir; default ~/.agent-crystallize/hooks
+  --stop-checkpoint-ms <ms>        Stop cadence threshold; default 1500000
+  --dedupe-window-ms <ms>          SessionStart/PostCompact dedupe window; default 600000
+  --max-pointers <count>           SessionStart local artifact pointers; default 3
+  --strict-precompact              Exit non-zero if PreCompact checkpoint fails
+  --include-transcript-uri         Include transcript_path from hook stdin when supplied
 `);
 }

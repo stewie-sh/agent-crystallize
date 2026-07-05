@@ -13,6 +13,14 @@ commit, diff, and import into other systems later.
     <timestamp>-<slug>.md
 ```
 
+In public repositories, treat this default layout as a local working area unless
+the artifacts have been intentionally sanitized. This repo keeps generated
+`.agent-crystals/` ignored and publishes safe examples under `examples/`.
+
+Hook state is not stored in `.agent-crystals/` by default. `agent-crystallize
+hook` keeps dedupe/activity state under `~/.agent-crystallize/hooks` unless
+`--state-dir` is supplied.
+
 ## Sections
 
 Generated artifacts include:
@@ -124,6 +132,42 @@ Suggested relation types include `derived_from`, `fixes`, `supersedes`,
 `validates`, `depends_on`, `relates_to`, `blocks`, `unlocks`, `contradicts`,
 `generalizes`, `branches_from`, and `merged_into`.
 
+## Superseded Intermediate Artifacts
+
+Checkpoints and crystals often capture raw intermediate work. When a commit,
+public doc, decision log, or fuller crystal supersedes that intermediate trace,
+keep the old artifact for debugging and provenance but route normal resume flows
+to the newer source of truth.
+
+Use relation hints to make that explicit:
+
+```bash
+agent-crystallize now \
+  --relation "supersedes:.agent-crystals/checkpoints/20260705T120000Z-precompact-checkpoint.md" \
+  --relation "validates:git commit abc123" \
+  --body "Commit abc123 is now the source of truth for this completed slice."
+```
+
+Future manifest/index views should be able to hide superseded intermediate
+artifacts by default while keeping them available for trace and debugging.
+
+## Manifest
+
+Use `agent-crystallize manifest` to build a lightweight local index of generated
+artifacts:
+
+```bash
+agent-crystallize manifest --write
+```
+
+The manifest reports active artifacts separately from superseded artifacts. By
+default, superseded artifacts are counted but omitted from the main JSON output;
+use `--include-superseded` when auditing trace/debug history.
+
+Normal resume flows should prefer active artifacts. Superseded checkpoints are
+still useful as evidence, but they should not crowd the first context an agent
+loads after a fresh session or compaction.
+
 ## Validation
 
 Run:
@@ -157,8 +201,7 @@ artifact under `.agent-crystals/`:
 
 ```bash
 agent-crystallize validate \
-  --files .agent-crystals/checkpoints/20260627T170254Z-context-checkpoint-demo.md \
-  --files .agent-crystals/sessions/20260627T171500Z-context-crystal-demo.md \
+  --files examples/sanitized-session-crystal.md \
   --fail-on-warnings
 ```
 
