@@ -247,7 +247,7 @@ async function hook(rest: string[]) {
             .filter(Boolean)
             .join("\n"),
           decision: "PreCompact is a lifecycle boundary; write a local checkpoint before compaction proceeds.",
-          finding: "Hook-created checkpoints are local-first artifacts and do not require mind-core.",
+          finding: "Hook-created checkpoints are local-first artifacts and do not require any external memory service.",
           openLoop: "After compaction, resume from the latest local checkpoint or session crystal before acting.",
           nextAction: "Read the latest checkpoint under .agent-crystals/checkpoints/ after compaction.",
         });
@@ -445,7 +445,7 @@ function renderSessionStartContext(
   if (sessions.length === 0 && checkpoints.length === 0) {
     lines.push("- No local .agent-crystals artifacts were found for this repo yet.");
   }
-  lines.push("- If mind-core or another memory layer is configured by your harness, use it as an optional pointer/index layer; agent-crystallize remains the local artifact writer.");
+  lines.push("- If an external memory or index layer is configured by your harness, use it as an optional pointer/index layer; agent-crystallize remains the local artifact writer.");
   const fullContext = lines.join("\n");
   const currentHash = stableKey(fullContext);
   const lastInjectedAt = state.lastInjectedContextAt ? Date.parse(state.lastInjectedContextAt) : 0;

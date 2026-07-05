@@ -196,5 +196,5 @@ capture for Codex and Claude Code.
 
 Start with [docs/hooks.md](hooks.md). The hook runner is local-first by default:
 it writes `.agent-crystals/`, stores dedupe/activity state under
-`~/.agent-crystallize/hooks`, and does not require mind-core or any hosted
+`~/.agent-crystallize/hooks`, and does not require any external memory or hosted
 service.

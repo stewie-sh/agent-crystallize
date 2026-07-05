@@ -53,10 +53,8 @@ The first npm release is published as `@stewie-sh/agent-crystallize@0.1.0`.
 
 This repo intentionally does not contain:
 
-- hosted memory service code;
-- billing, accounts, auth, or sync infrastructure;
-- private Stewie strategy or customer workflow;
-- private transcripts or raw internal handoff material;
-- product-specific operating-memory internals.
+- hosted service, sync, billing, or account code;
+- private planning notes, internal strategy, or customer workflow;
+- private transcripts or raw internal handoff material.
 
 Those belong outside this public local-first CLI repo.

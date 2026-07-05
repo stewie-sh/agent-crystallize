@@ -10,11 +10,11 @@ commands remain the safest starting point.
 
 - `agent-crystallize` owns local artifact writing under `.agent-crystals/`.
 - Hook state lives outside the repo by default at `~/.agent-crystallize/hooks`.
-- mind-core, if present in your environment, is an optional pointer/index layer.
-  It should not also write duplicate local Markdown artifacts for the same hook
-  event.
-- Public hooks do not require mind-core, accounts, telemetry, sync, or a hosted
-  service.
+- An external memory system, if present in your environment, is an optional
+  pointer/index layer. It should not also write duplicate local Markdown
+  artifacts for the same hook event.
+- Public hooks do not require any external memory service, accounts, telemetry,
+  sync, or a hosted service.
 
 ## Supported Events
 
@@ -97,4 +97,4 @@ agent-crystallize hook \
 
 Keep richer memory systems outside the local writer path. A future adapter can
 watch generated artifact paths or wrap the hook command, then attach pointers to
-mind-core or another memory system without changing the local artifact contract.
+an external memory system without changing the local artifact contract.

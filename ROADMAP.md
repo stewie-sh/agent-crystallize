@@ -64,14 +64,9 @@ For each public release or announcement:
 
 ## Not The Goal Of This Repo
 
-This roadmap does not include:
+This repo is the local-first CLI and format. It is intentionally not a hosted
+product: it needs no account, no network service, and no hosted backend to be
+useful — and it will not grow one inside this package.
 
-- hosted workflow/runtime features;
-- a cloud memory database;
-- billing or account management;
-- transcript ingestion at scale;
-- project-management dashboards;
-- private operating-memory orchestration.
-
-Those can integrate with local crystals later, but the default OSS package
-should remain useful without them.
+Richer memory or sync systems can build on top of the local crystal artifacts,
+but the default OSS package stays fully useful on its own.
