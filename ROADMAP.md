@@ -11,7 +11,8 @@
    cross-agent handoff, not only syntax.
 5. Keep hook automation local-first and experimental while Codex and Claude Code
    adapters mature.
-6. Publish the first npm release of `@stewie-sh/agent-crystallize`.
+6. Gather feedback from the first npm release of
+   `@stewie-sh/agent-crystallize`.
 
 ## V0 Product Principle
 
@@ -47,9 +48,9 @@ The goal is practical recovery first, deeper memory synthesis later.
 - Optional hook installers that detect existing hook commands instead of adding
   duplicate lifecycle writers.
 
-## Public Launch Readiness
+## Public Launch Checklist
 
-Before making the repo public or announcing it:
+For each public release or announcement:
 
 - run `npm run check`;
 - run `npm pack --dry-run`;

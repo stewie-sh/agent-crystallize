@@ -2,7 +2,7 @@
 
 Local-first checkpoints and crystals for long-running AI coding agent sessions.
 
-Status: public seed / first npm release candidate.
+Status: public seed / first npm release.
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
@@ -95,12 +95,12 @@ Default output:
 
 ## Five-Minute Useful Path
 
-Until the package is published, run the CLI from a local checkout:
+Install the package and create a first checkpoint:
 
 ```bash
-npm install
-npm run build
-npm run dev -- checkpoint \
+npm install -g @stewie-sh/agent-crystallize
+
+agent-crystallize checkpoint \
   --body "Finished the launch-readiness pass. Build passes. Need public scan next." \
   --topic "launch-readiness" \
   --decision "Keep generated dogfood artifacts local unless they are sanitized examples." \
@@ -111,7 +111,7 @@ npm run dev -- checkpoint \
 Before ending the session, roll the recent checkpoints into a session crystal:
 
 ```bash
-npm run dev -- now \
+agent-crystallize now \
   --from-checkpoints latest \
   --body "Ready to hand off. Preserve current focus, decisions, verification, open loops, and next action." \
   --topic "agent-context-crystallization"
@@ -120,7 +120,7 @@ npm run dev -- now \
 Then validate what you plan to rely on:
 
 ```bash
-npm run dev -- validate
+agent-crystallize validate
 ```
 
 Generated `.agent-crystals/` files are local work artifacts by default. This repo
