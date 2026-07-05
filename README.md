@@ -134,7 +134,7 @@ The first version is intentionally boring infrastructure:
 
 - no account;
 - no login;
-- no network dependency;
+- no runtime network dependency;
 - no hosted database;
 - no server setup;
 - inspectable Markdown files in your repo.

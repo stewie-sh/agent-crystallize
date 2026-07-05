@@ -74,8 +74,8 @@ writes inspectable Markdown under `.agent-crystals/`, captures safe git and
 session provenance, supports structured decisions/findings/open loops, and
 validates artifacts before they become handoff material.
 
-It has no account, no telemetry, no hosted database, and no network dependency
-in the default path.
+It has no account, no telemetry, no hosted database, and no runtime network
+dependency in the default path.
 
 ### Why Local First
 

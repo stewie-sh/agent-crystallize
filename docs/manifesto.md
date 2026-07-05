@@ -49,7 +49,7 @@ Markdown artifacts under `.agent-crystals/`, captures safe git and session
 provenance, supports structured decision/finding/open-loop fields, and validates
 that generated artifacts are useful enough to resume from.
 
-The default CLI has no account, no network dependency, no telemetry, and no
-hosted database. Storage adapters or richer memory systems can import these
+The default CLI has no account, no runtime network dependency, no telemetry, and
+no hosted database. Storage adapters or richer memory systems can import these
 local artifacts later, but the artifact itself remains the portable source of
 continuity.
