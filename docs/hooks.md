@@ -37,7 +37,16 @@ checkpoint creation fails.
 ### PostCompact
 
 Write a compact-summary checkpoint only when a recent `PreCompact` checkpoint
-was not already recorded.
+was not already recorded. It also prints a compact-resume bootstrap with the
+latest local artifact pointers, so the next agent turn has a chance to see the
+same orientation even if `SessionStart` is delayed by the harness.
+
+### UserPromptSubmit
+
+Mark activity in hook state. If a `PostCompact` hook ran since the last
+prompt-level compact bootstrap, print one idempotent compact-resume fallback.
+This reduces the blind window where a resumed session may answer from lossy
+compacted context before noticing the latest checkpoint pointers.
 
 ### Stop
 
@@ -80,9 +89,19 @@ The hook runner keeps a small state file to avoid obvious duplication:
 - `SessionStart` routes through the local manifest logic, so artifacts marked
   as superseded by newer crystals are not shown as primary resume pointers.
 - `PostCompact` skips writing a duplicate checkpoint when `PreCompact` already
-  wrote one recently.
+  wrote one recently, but still prints a compact-resume bootstrap.
+- `UserPromptSubmit` prints the post-compact fallback at most once per
+  `PostCompact`.
 - `Stop` writes only when there is uncheckpointed activity and the cadence
   threshold elapsed.
+
+## Harness Caveat
+
+Hook output injection is host-specific. `agent-crystallize hook` emits bootstrap
+context on `SessionStart`, `PostCompact`, and the first `UserPromptSubmit` after
+compaction, but each harness decides how command stdout or `additionalContext`
+is surfaced to the model. Verify the lifecycle in your harness before relying
+on hooks as the only compaction safety net.
 
 Override the defaults with:
 

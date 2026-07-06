@@ -312,6 +312,14 @@ Hook options:
 --include-transcript-uri         Include transcript_path from hook stdin when supplied
 ```
 
+Hook compaction behavior:
+
+- `PreCompact` writes a local checkpoint before lossy compaction.
+- `PostCompact` prints a compact-resume bootstrap even when it skips a duplicate
+  checkpoint because a recent `PreCompact` checkpoint already exists.
+- `UserPromptSubmit` prints one post-compact fallback bootstrap if the harness
+  did not surface the compact-resume context before the next prompt.
+
 Read body text from stdin:
 
 ```bash

@@ -88,6 +88,9 @@ interface HookProjectState {
   lastSessionStartAt?: string;
   lastInjectedContextHash?: string;
   lastInjectedContextAt?: string;
+  lastInjectedContextEvent?: string;
+  lastPostCompactAt?: string;
+  lastPostCompactPromptBootstrapAt?: string;
 }
 
 interface ArtifactRecord {
@@ -401,13 +404,36 @@ async function hook(rest: string[]) {
       projectState.lastSessionStartAt = new Date().toISOString();
       projectState.lastInjectedContextHash = fullContextHash;
       projectState.lastInjectedContextAt = new Date().toISOString();
+      projectState.lastInjectedContextEvent = event;
       save();
-      outputHookContext(harness, context.output);
+      outputHookContext(harness, event, context.output);
       return undefined;
     }
     case "UserPromptSubmit": {
       projectState.lastActivityAt = new Date().toISOString();
       projectState.lastActivityEvent = event;
+      const lastPostCompact = projectState.lastPostCompactAt ? Date.parse(projectState.lastPostCompactAt) : 0;
+      const lastPromptBootstrap = projectState.lastPostCompactPromptBootstrapAt
+        ? Date.parse(projectState.lastPostCompactPromptBootstrapAt)
+        : 0;
+      if (lastPostCompact > lastPromptBootstrap) {
+        const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
+        projectState.lastInjectedContextHash = stableKey(context);
+        projectState.lastInjectedContextAt = new Date().toISOString();
+        projectState.lastInjectedContextEvent = event;
+        projectState.lastPostCompactPromptBootstrapAt = projectState.lastInjectedContextAt;
+        save();
+        outputHookContext(
+          harness,
+          event,
+          [
+            "agent-crystallize post-compact bootstrap fallback:",
+            "A PostCompact hook ran since the last prompt-level compact bootstrap.",
+            context,
+          ].join("\n"),
+        );
+        return undefined;
+      }
       save();
       return undefined;
     }
@@ -457,11 +483,26 @@ async function hook(rest: string[]) {
       return undefined;
     }
     case "PostCompact": {
+      const now = new Date().toISOString();
       const lastPreCompact = projectState.lastPreCompactAt ? Date.parse(projectState.lastPreCompactAt) : 0;
       if (lastPreCompact > 0 && Date.now() - lastPreCompact <= dedupeWindowMs) {
-        projectState.lastActivityAt = new Date().toISOString();
+        const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
+        projectState.lastActivityAt = now;
         projectState.lastActivityEvent = event;
+        projectState.lastPostCompactAt = now;
+        projectState.lastInjectedContextHash = stableKey(context);
+        projectState.lastInjectedContextAt = now;
+        projectState.lastInjectedContextEvent = event;
         save();
+        outputHookContext(
+          harness,
+          event,
+          [
+            "agent-crystallize post-compact bootstrap:",
+            "A recent PreCompact checkpoint already exists, so no duplicate checkpoint was written.",
+            context,
+          ].join("\n"),
+        );
         return undefined;
       }
       const compactSummary = stringField(input, "compact_summary") ?? "";
@@ -484,7 +525,21 @@ async function hook(rest: string[]) {
       projectState.lastCheckpointAt = new Date().toISOString();
       projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
       projectState.lastCheckpointEvent = event;
+      projectState.lastPostCompactAt = projectState.lastCheckpointAt;
+      const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
+      projectState.lastInjectedContextHash = stableKey(context);
+      projectState.lastInjectedContextAt = projectState.lastCheckpointAt;
+      projectState.lastInjectedContextEvent = event;
       save();
+      outputHookContext(
+        harness,
+        event,
+        [
+          "agent-crystallize post-compact bootstrap:",
+          "A PostCompact checkpoint was written because no recent PreCompact checkpoint was found.",
+          context,
+        ].join("\n"),
+      );
       return undefined;
     }
     case "Stop": {
@@ -657,12 +712,12 @@ function renderSessionStartContext(
   return { output, fullContext };
 }
 
-function outputHookContext(harness: string, context: string) {
+function outputHookContext(harness: string, event: HookEvent, context: string) {
   if (harness === "claude-code") {
     process.stdout.write(
       `${JSON.stringify({
         hookSpecificOutput: {
-          hookEventName: "SessionStart",
+          hookEventName: event,
           additionalContext: context,
         },
         suppressOutput: true,
