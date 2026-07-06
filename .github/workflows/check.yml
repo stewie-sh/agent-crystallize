@@ -40,9 +40,19 @@ jobs:
             | node dist/index.js hook --repo "$tmpdir" --state-dir "$statedir" --harness codex --event PreCompact --strict-precompact
           before_count="$(find "$tmpdir/.agent-crystals/checkpoints" -type f | wc -l)"
           printf '{"cwd":"%s","hook_event_name":"PostCompact","trigger":"manual","compact_summary":"CI compact summary"}' "$tmpdir" \
-            | node dist/index.js hook --repo "$tmpdir" --state-dir "$statedir" --harness codex --event PostCompact
+            | node dist/index.js hook --repo "$tmpdir" --state-dir "$statedir" --harness codex --event PostCompact \
+            | tee /tmp/agent-crystallize-postcompact.out
           after_count="$(find "$tmpdir/.agent-crystals/checkpoints" -type f | wc -l)"
           test "$before_count" = "$after_count"
+          grep -q "agent-crystallize post-compact bootstrap" /tmp/agent-crystallize-postcompact.out
+          printf '{"cwd":"%s","hook_event_name":"UserPromptSubmit","prompt":"continue after compact"}' "$tmpdir" \
+            | node dist/index.js hook --repo "$tmpdir" --state-dir "$statedir" --harness codex --event UserPromptSubmit \
+            | tee /tmp/agent-crystallize-prompt1.out
+          grep -q "agent-crystallize post-compact bootstrap fallback" /tmp/agent-crystallize-prompt1.out
+          printf '{"cwd":"%s","hook_event_name":"UserPromptSubmit","prompt":"continue again"}' "$tmpdir" \
+            | node dist/index.js hook --repo "$tmpdir" --state-dir "$statedir" --harness codex --event UserPromptSubmit \
+            > /tmp/agent-crystallize-prompt2.out
+          test ! -s /tmp/agent-crystallize-prompt2.out
           node dist/index.js validate --repo "$tmpdir" --fail-on-warnings
 
       - name: Manifest smoke
