@@ -95,11 +95,20 @@ Default output:
 
 ## Five-Minute Useful Path
 
-Install the package and create a first checkpoint:
+Install the package, set up a thin protocol pointer, and activate the current
+repo:
 
 ```bash
 npm install -g @stewie-sh/agent-crystallize
 
+agent-crystallize setup --codex
+agent-crystallize init
+agent-crystallize doctor
+```
+
+Then create a first checkpoint:
+
+```bash
 agent-crystallize checkpoint \
   --body "Finished the launch-readiness pass. Build passes. Need public scan next." \
   --topic "launch-readiness" \
@@ -191,6 +200,9 @@ default CLI writes local files only.
 ## Commands
 
 ```bash
+agent-crystallize setup [options]
+agent-crystallize init [options]
+agent-crystallize doctor [options]
 agent-crystallize checkpoint [options] [summary]
 agent-crystallize now [options] [summary]
 agent-crystallize validate [options]
@@ -198,7 +210,39 @@ agent-crystallize manifest [options]
 agent-crystallize hook [options]
 ```
 
-Options:
+Setup options:
+
+```text
+--dry-run                 Show planned setup actions without writing
+--force                   Replace existing protocol file when it differs
+--all                     Configure all supported global harness pointers
+--codex                   Add/update ~/.codex/AGENTS.md managed pointer
+--claude                  Add/update ~/.claude/CLAUDE.md managed pointer
+--hooks                   Report hook setup docs; v0 does not mutate hook config
+--protocol <path>         Protocol path; default ~/.agents/context-persistence-protocol.md
+```
+
+Init options:
+
+```text
+--repo <path>             Repo to activate; default cwd
+--project <slug>          Project/product slug; default repo basename
+--dry-run                 Show planned init actions without writing
+--no-checkpoint           Do not create an activation checkpoint
+--no-agents-md            Do not create/update repo AGENTS.md pointer
+--hooks                   Report hook setup docs; v0 does not mutate hook config
+--mind                    Mark intent to connect an external memory layer later
+```
+
+Doctor options:
+
+```text
+--repo <path>             Repo to inspect; default cwd
+--codex                   Check ~/.codex/AGENTS.md managed pointer
+--claude                  Check ~/.claude/CLAUDE.md managed pointer
+```
+
+Crystal/checkpoint options:
 
 ```text
 --repo <path>              Repo to crystallize; default cwd

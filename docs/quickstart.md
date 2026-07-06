@@ -10,6 +10,42 @@ npm run dev -- --help
 
 The examples below use the installed `agent-crystallize` binary.
 
+## Set Up Once
+
+Create a lightweight user-level protocol file and, optionally, add a global
+pointer for your coding-agent harness:
+
+```bash
+agent-crystallize setup --codex
+agent-crystallize setup --claude
+```
+
+Use `--dry-run` first if you want to inspect planned writes:
+
+```bash
+agent-crystallize setup --dry-run --codex --claude
+```
+
+Hook automation is intentionally opt-in. `agent-crystallize setup --hooks`
+points you to the hook docs, but v0 does not mutate harness hook config
+automatically.
+
+## Activate A Repo
+
+Run this once in a repo where you want local context artifacts:
+
+```bash
+agent-crystallize init
+agent-crystallize doctor
+```
+
+`init` creates `.agent-crystals/`, writes a repo `AGENTS.md` pointer if needed,
+adds local/private patterns to `.git/info/exclude`, creates an activation
+checkpoint, and writes `.agent-crystals/manifest.json`.
+
+Generated crystals are local work artifacts by default. Commit them only when
+they are intentionally reviewed and sanitized.
+
 ## Create A Checkpoint
 
 Use checkpoints as mini-crystallizations during long-running work:

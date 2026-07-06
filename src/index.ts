@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, fstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -25,6 +25,10 @@ const requiredSections = [
 ];
 
 const hookEvents = ["SessionStart", "UserPromptSubmit", "PostToolUse", "PostToolBatch", "PreCompact", "PostCompact", "Stop"] as const;
+const managedStart = "<!-- agent-crystallize:context-persistence:start -->";
+const managedEnd = "<!-- agent-crystallize:context-persistence:end -->";
+const localExcludeStart = "# agent-crystallize:local-private:start";
+const localExcludeEnd = "# agent-crystallize:local-private:end";
 
 try {
   const result = await run(command, args);
@@ -48,6 +52,12 @@ async function run(name: string | undefined, rest: string[]) {
       return manifest(rest);
     case "hook":
       return hook(rest);
+    case "setup":
+      return setup(rest);
+    case "init":
+      return init(rest);
+    case "doctor":
+      return doctor(rest);
     case "help":
     case "--help":
     case "-h":
@@ -96,6 +106,187 @@ interface ArtifactRecord {
     warnings: string[];
   };
   supersededBy: string[];
+}
+
+interface FileAction {
+  path: string;
+  action: "created" | "updated" | "unchanged" | "would_create" | "would_update" | "would_skip" | "skipped";
+  detail?: string;
+}
+
+function setup(rest: string[]) {
+  const dryRun = takeBooleanFlag(rest, "--dry-run");
+  const force = takeBooleanFlag(rest, "--force");
+  const all = takeBooleanFlag(rest, "--all");
+  const codex = all || takeBooleanFlag(rest, "--codex");
+  const claude = all || takeBooleanFlag(rest, "--claude");
+  const hooks = takeBooleanFlag(rest, "--hooks");
+  const protocolPath = resolve(expandHome(takeFlag(rest, "--protocol") ?? "~/.agents/context-persistence-protocol.md"));
+  if (rest.length > 0) throw new Error(`Unexpected setup arguments: ${rest.join(" ")}`);
+
+  const actions: FileAction[] = [];
+  actions.push(writeIfChanged(protocolPath, renderProtocolFile(), { dryRun, force }));
+  if (codex) {
+    actions.push(
+      upsertManagedBlock(resolve(homedir(), ".codex", "AGENTS.md"), renderHarnessPointer("Codex"), {
+        dryRun,
+        heading: "# Global Codex Instructions\n\n",
+      }),
+    );
+  }
+  if (claude) {
+    actions.push(
+      upsertManagedBlock(resolve(homedir(), ".claude", "CLAUDE.md"), renderHarnessPointer("Claude Code"), {
+        dryRun,
+        heading: "# Global Claude Code Instructions\n\n",
+      }),
+    );
+  }
+  if (hooks) {
+    actions.push({
+      path: "docs/hooks.md",
+      action: "skipped",
+      detail:
+        "Hook config is harness-specific and is not auto-written by setup v0. Review docs/hooks.md and examples/hooks before installing hooks.",
+    });
+  }
+
+  return {
+    ok: true,
+    dryRun,
+    protocolPath,
+    codexConfigured: codex,
+    claudeConfigured: claude,
+    hooksRequested: hooks,
+    actions,
+    nextActions:
+      codex || claude
+        ? ["Run agent-crystallize doctor.", "Run agent-crystallize init inside each repo that should keep local crystals."]
+        : [
+            "Run agent-crystallize setup --codex or --claude to add a thin global harness pointer.",
+            "Run agent-crystallize init inside each repo that should keep local crystals.",
+          ],
+  };
+}
+
+async function init(rest: string[]) {
+  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+  const project = takeFlag(rest, "--project") ?? basename(repo);
+  const dryRun = takeBooleanFlag(rest, "--dry-run");
+  const noCheckpoint = takeBooleanFlag(rest, "--no-checkpoint");
+  const noAgentsMd = takeBooleanFlag(rest, "--no-agents-md");
+  const hooks = takeBooleanFlag(rest, "--hooks");
+  const mind = takeBooleanFlag(rest, "--mind");
+  if (rest.length > 0) throw new Error(`Unexpected init arguments: ${rest.join(" ")}`);
+  if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
+
+  const actions: FileAction[] = [];
+  actions.push(ensureDirectory(resolve(repo, ".agent-crystals"), dryRun));
+  actions.push(ensureDirectory(resolve(repo, ".agent-crystals", "checkpoints"), dryRun));
+  actions.push(ensureDirectory(resolve(repo, ".agent-crystals", "sessions"), dryRun));
+  actions.push(upsertLocalExclude(repo, dryRun));
+  if (!noAgentsMd) {
+    actions.push(
+      upsertManagedBlock(resolve(repo, "AGENTS.md"), renderRepoPointer(project), {
+        dryRun,
+        heading: "# Project Instructions\n\n",
+      }),
+    );
+  }
+
+  let checkpoint: Record<string, unknown> | undefined;
+  let manifestResult: unknown;
+  if (!dryRun) {
+    if (!noCheckpoint) {
+      checkpoint = (await crystallize(
+        [
+          "--repo",
+          repo,
+          "--project",
+          project,
+          "--scope",
+          "project",
+          "--budget",
+          "fast",
+          "--title",
+          `Repo activation checkpoint - ${project} - ${formatDate(new Date())}`,
+          "--topic",
+          "agent-context-crystallization",
+          "--topic",
+          "repo-activation",
+          "--decision",
+          "Use local .agent-crystals artifacts as repo-scoped continuity checkpoints.",
+          "--finding",
+          "agent-crystallize init created the local artifact structure and private exclude patterns.",
+          "--open-loop",
+          "Review whether this repo should enable harness hooks after manual checkpoint flow is trusted.",
+          "--test",
+          "agent-crystallize init completed.",
+          "--next-action",
+          "Run agent-crystallize doctor before relying on this repo activation.",
+          "--memory-candidate",
+          "Repo activation is the handoff point from ad hoc notes to local-first context crystallization.",
+          "--body",
+          `Initialized agent-crystallize for ${project}. Local crystals are repo-scoped work context, not hidden chain-of-thought.`,
+        ],
+        "checkpoint",
+      )) as Record<string, unknown>;
+    }
+    manifestResult = manifest(["--repo", repo, "--write"]);
+  }
+  if (hooks) {
+    actions.push({
+      path: "docs/hooks.md",
+      action: "skipped",
+      detail:
+        "Hook installation is opt-in. Review docs/hooks.md and examples/hooks; setup v0 does not mutate harness hook config automatically.",
+    });
+  }
+
+  return {
+    ok: true,
+    dryRun,
+    repo,
+    project,
+    actions,
+    checkpoint,
+    manifest: manifestResult,
+    mindRequested: mind,
+    mindNote: mind
+      ? "An external memory system can import/link generated artifacts later. Public agent-crystallize stays local-file-only by default."
+      : undefined,
+  };
+}
+
+function doctor(rest: string[]) {
+  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+  const codex = takeBooleanFlag(rest, "--codex");
+  const claude = takeBooleanFlag(rest, "--claude");
+  if (rest.length > 0) throw new Error(`Unexpected doctor arguments: ${rest.join(" ")}`);
+  if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
+
+  const checks = [
+    checkPath("repo", repo, true),
+    checkPath("repo:.agent-crystals", resolve(repo, ".agent-crystals"), true),
+    checkPath("repo:.agent-crystals/checkpoints", resolve(repo, ".agent-crystals", "checkpoints"), true),
+    checkPath("repo:.agent-crystals/sessions", resolve(repo, ".agent-crystals", "sessions"), true),
+    checkPath("repo:.agent-crystals/manifest.json", resolve(repo, ".agent-crystals", "manifest.json"), false),
+    checkPath("repo:AGENTS.md", resolve(repo, "AGENTS.md"), false),
+    checkLocalExclude(repo),
+    checkPath("global:protocol", resolve(homedir(), ".agents", "context-persistence-protocol.md"), false),
+  ];
+  if (codex) checks.push(checkManagedPointer("global:codex", resolve(homedir(), ".codex", "AGENTS.md")));
+  if (claude) checks.push(checkManagedPointer("global:claude", resolve(homedir(), ".claude", "CLAUDE.md")));
+  const requiredFailed = checks.filter((check) => check.required && check.status !== "ok");
+  return {
+    ok: requiredFailed.length === 0,
+    repo,
+    checks,
+    nextActions:
+      requiredFailed.length === 0
+        ? ["Use agent-crystallize checkpoint during long work and agent-crystallize now before handoff or compaction."]
+        : ["Run agent-crystallize init in this repo.", "Run agent-crystallize setup --codex or --claude for harness-global pointers."],
+  };
 }
 
 async function crystallize(rest: string[], kind: ArtifactKind) {
@@ -499,6 +690,171 @@ function stringRecordField(input: unknown, key: string) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
   const value = (input as Record<string, unknown>)[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function expandHome(path: string) {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function ensureDirectory(path: string, dryRun: boolean): FileAction {
+  if (existsSync(path)) return { path, action: "unchanged", detail: "directory exists" };
+  if (dryRun) return { path, action: "would_create", detail: "directory" };
+  mkdirSync(path, { recursive: true });
+  return { path, action: "created", detail: "directory" };
+}
+
+function writeIfChanged(path: string, content: string, options: { dryRun: boolean; force: boolean }): FileAction {
+  const exists = existsSync(path);
+  if (exists) {
+    const current = readFileSync(path, "utf8");
+    if (current === content) return { path, action: "unchanged" };
+    if (!options.force) {
+      return {
+        path,
+        action: options.dryRun ? "would_skip" : "skipped",
+        detail: "file exists; pass --force to replace it",
+      };
+    }
+  }
+  if (options.dryRun) return { path, action: exists ? "would_update" : "would_create" };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, "utf8");
+  return { path, action: exists ? "updated" : "created" };
+}
+
+function upsertManagedBlock(path: string, block: string, options: { dryRun: boolean; heading: string }): FileAction {
+  const managed = `${managedStart}\n${block.trim()}\n${managedEnd}\n`;
+  const exists = existsSync(path);
+  const current = exists ? readFileSync(path, "utf8") : "";
+  const next = current.includes(managedStart) && current.includes(managedEnd)
+    ? current.replace(new RegExp(`${escapeRegex(managedStart)}[\\s\\S]*?${escapeRegex(managedEnd)}\\n?`), managed)
+    : `${exists ? current.replace(/\s*$/u, "\n\n") : options.heading}${managed}`;
+  if (current === next) return { path, action: "unchanged" };
+  if (options.dryRun) return { path, action: exists ? "would_update" : "would_create" };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, next, "utf8");
+  return { path, action: exists ? "updated" : "created" };
+}
+
+function upsertLocalExclude(repo: string, dryRun: boolean): FileAction {
+  const gitRoot = collectGitContext(repo).root;
+  if (!gitRoot) {
+    return {
+      path: resolve(repo, ".git", "info", "exclude"),
+      action: "skipped",
+      detail: "not a git repository; local private exclude not written",
+    };
+  }
+  const path = resolve(gitRoot, ".git", "info", "exclude");
+  const existed = existsSync(path);
+  const block = `${localExcludeStart}
+.agent-crystals/
+.local/
+.private/
+private/
+docs/private/
+docs/internal/
+*.private.md
+*.internal.md
+${localExcludeEnd}
+`;
+  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const next = current.includes(localExcludeStart) && current.includes(localExcludeEnd)
+    ? current.replace(new RegExp(`${escapeRegex(localExcludeStart)}[\\s\\S]*?${escapeRegex(localExcludeEnd)}\\n?`), block)
+    : `${current.replace(/\s*$/u, "\n")}\n${block}`;
+  if (current === next) return { path, action: "unchanged" };
+  if (dryRun) return { path, action: existed ? "would_update" : "would_create" };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, next, "utf8");
+  return { path, action: existed ? "updated" : "created" };
+}
+
+function checkPath(name: string, path: string, required: boolean) {
+  return {
+    name,
+    path,
+    required,
+    status: existsSync(path) ? "ok" : required ? "missing" : "missing_optional",
+  };
+}
+
+function checkLocalExclude(repo: string) {
+  const gitRoot = collectGitContext(repo).root;
+  const path = gitRoot ? resolve(gitRoot, ".git", "info", "exclude") : resolve(repo, ".git", "info", "exclude");
+  const body = existsSync(path) ? readFileSync(path, "utf8") : "";
+  return {
+    name: "repo:git-info-exclude",
+    path,
+    required: false,
+    status: body.includes(localExcludeStart) && body.includes(".agent-crystals/") ? "ok" : "missing_optional",
+  };
+}
+
+function checkManagedPointer(name: string, path: string) {
+  const body = existsSync(path) ? readFileSync(path, "utf8") : "";
+  return {
+    name,
+    path,
+    required: false,
+    status: body.includes(managedStart) && body.includes("agent-crystallize") ? "ok" : existsSync(path) ? "missing_pointer" : "missing_optional",
+  };
+}
+
+function renderProtocolFile() {
+  return `# Context Persistence Protocol
+
+Protocol: agent-context-crystallization/0.1
+
+This file is a thin user-level pointer for local-first agent context persistence.
+
+## Core Rules
+
+- Preserve durable work context, not hidden chain-of-thought.
+- Use checkpoints as lightweight save-points during long-running agent work.
+- Use fuller session crystals before handoff, compaction, or session end.
+- Prefer provenance pointers over copying large raw transcripts.
+- Keep private/local artifacts out of public repos unless they are intentionally sanitized.
+- Treat external memory systems as optional index/storage layers. The local artifact stays portable.
+
+## Useful Commands
+
+\`\`\`bash
+agent-crystallize init
+agent-crystallize checkpoint --body "Current state, decision, open loop, next action."
+agent-crystallize now --from-checkpoints latest --body "Ready to hand off."
+agent-crystallize validate
+agent-crystallize manifest --write
+agent-crystallize doctor
+\`\`\`
+`;
+}
+
+function renderHarnessPointer(harnessName: string) {
+  return `Context persistence protocol:
+
+- Follow \`~/.agents/context-persistence-protocol.md\` when available.
+- Use \`agent-crystallize checkpoint\` after high-signal work, decisions, failed tests, reality checks, or before handoff/compaction.
+- Use \`agent-crystallize now --from-checkpoints latest\` for fuller session crystals.
+- Generated crystals are work context and evidence, not hidden chain-of-thought.
+- Keep private/local artifacts out of public repos unless intentionally sanitized.
+
+Harness: ${harnessName}.`;
+}
+
+function renderRepoPointer(project: string) {
+  return `Context crystallization:
+
+- This repo may keep local work-context artifacts under \`.agent-crystals/\`.
+- Start with \`agent-crystallize doctor\` if continuity feels broken.
+- Use \`agent-crystallize checkpoint --project ${project} --body "<state, decision, open loop, next action>"\` during long work.
+- Use \`agent-crystallize now --from-checkpoints latest --project ${project} --body "<handoff>"\` before handoff or compaction.
+- Treat generated crystals as local/private by default. Commit only sanitized examples or intentionally reviewed artifacts.`;
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function validate(rest: string[]) {
@@ -1195,13 +1551,39 @@ function usage() {
   process.stdout.write(`agent-crystallize
 
 Commands:
+  agent-crystallize setup [options]
+  agent-crystallize init [options]
+  agent-crystallize doctor [options]
   agent-crystallize now [options] [summary]
   agent-crystallize checkpoint [options] [summary]
   agent-crystallize validate [options]
   agent-crystallize manifest [options]
   agent-crystallize hook [options]
 
-Options:
+Setup options:
+  --dry-run                 Show planned setup actions without writing
+  --force                   Replace existing protocol file when it differs
+  --all                     Configure all supported global harness pointers
+  --codex                   Add/update ~/.codex/AGENTS.md managed pointer
+  --claude                  Add/update ~/.claude/CLAUDE.md managed pointer
+  --hooks                   Report hook setup docs; v0 does not mutate hook config
+  --protocol <path>         Protocol path; default ~/.agents/context-persistence-protocol.md
+
+Init options:
+  --repo <path>             Repo to activate; default cwd
+  --project <slug>          Project/product slug; default repo basename
+  --dry-run                 Show planned init actions without writing
+  --no-checkpoint           Do not create an activation checkpoint
+  --no-agents-md            Do not create/update repo AGENTS.md pointer
+  --hooks                   Report hook setup docs; v0 does not mutate hook config
+  --mind                    Mark intent to connect an external memory layer later
+
+Doctor options:
+  --repo <path>             Repo to inspect; default cwd
+  --codex                   Check ~/.codex/AGENTS.md managed pointer
+  --claude                  Check ~/.claude/CLAUDE.md managed pointer
+
+Crystal/checkpoint options:
   --repo <path>              Repo to crystallize; default cwd
   --out-dir <path>           Output dir relative to repo; default .agent-crystals/sessions or .agent-crystals/checkpoints
   --title <title>            Crystal title
