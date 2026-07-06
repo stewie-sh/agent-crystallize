@@ -20,7 +20,7 @@ Crystallization:
 - an experimental local-first hook runner for Codex and Claude Code lifecycle
   events, including compact-resume bootstrap output.
 
-The current npm release is published as `@stewie-sh/agent-crystallize@0.1.2`.
+The current npm release is published as `@stewie-sh/agent-crystallize@0.1.4`.
 
 ## What Is Stable Enough To Review
 
@@ -48,9 +48,8 @@ The current npm release is published as `@stewie-sh/agent-crystallize@0.1.2`.
   adapters.
 - The hook installer/plugin story for Codex and Claude Code.
 - Post-release feedback from real Codex and Claude Code hook usage.
-- GitHub Actions release publishing is configured for version tags. npm Trusted
-  Publishing or equivalent registry auth must be configured outside the repo;
-  no npm token is committed here.
+- GitHub Actions release publishing is configured for version tags and verified
+  with npm Trusted Publishing as of `v0.1.4`; no npm token is committed here.
 
 ## What Is Intentionally Missing Here
 
