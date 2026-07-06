@@ -47,23 +47,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="$(cat <<'NOTES'
-Automated release from GitHub Actions.
-
-Verification:
-- npm ci
-- npm run check
-- npm pack --dry-run
-- npm publish --access public --provenance
-NOTES
-)"
+          {
+            echo "Automated release from GitHub Actions."
+            echo
+            echo "Verification:"
+            echo "- npm ci"
+            echo "- npm run check"
+            echo "- npm pack --dry-run"
+            echo "- npm publish --access public --provenance"
+          } > release-notes.md
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "agent-crystallize $GITHUB_REF_NAME" \
-            --notes "$notes" \
+            --notes-file release-notes.md \
             || gh release edit "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "agent-crystallize $GITHUB_REF_NAME" \
-              --notes "$notes"
+              --notes-file release-notes.md
