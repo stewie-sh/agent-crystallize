@@ -52,6 +52,16 @@ checkpoint, and writes `.agent-crystals/manifest.json`.
 Generated crystals are local work artifacts by default. Commit them only when
 they are intentionally reviewed and sanitized.
 
+If you use hooks, run the hook-aware doctor after editing hook config:
+
+```bash
+agent-crystallize doctor --codex --claude --hooks
+```
+
+This can detect common config locations and remind you to verify/trust hooks in
+the host harness. It cannot prove Codex has trusted a hook, because Codex may
+skip untrusted hooks before the hook command or CLI can run.
+
 ## Create A Checkpoint
 
 Use checkpoints as mini-crystallizations during long-running work:

@@ -265,6 +265,7 @@ function doctor(rest: string[]) {
   const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
   const codex = takeBooleanFlag(rest, "--codex");
   const claude = takeBooleanFlag(rest, "--claude");
+  const hooks = takeBooleanFlag(rest, "--hooks");
   if (rest.length > 0) throw new Error(`Unexpected doctor arguments: ${rest.join(" ")}`);
   if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
 
@@ -280,6 +281,7 @@ function doctor(rest: string[]) {
   ];
   if (codex) checks.push(checkManagedPointer("global:codex", resolve(homedir(), ".codex", "AGENTS.md")));
   if (claude) checks.push(checkManagedPointer("global:claude", resolve(homedir(), ".claude", "CLAUDE.md")));
+  if (hooks) checks.push(...checkHookConfig());
   const requiredFailed = checks.filter((check) => check.required && check.status !== "ok");
   return {
     ok: requiredFailed.length === 0,
@@ -287,7 +289,13 @@ function doctor(rest: string[]) {
     checks,
     nextActions:
       requiredFailed.length === 0
-        ? ["Use agent-crystallize checkpoint during long work and agent-crystallize now before handoff or compaction."]
+        ? hooks
+          ? [
+              "Codex: open /hooks after installing or changing hooks, then review and trust changed hook definitions.",
+              "Claude Code: open /hooks and use transcript/debug logs to verify hook visibility and failures.",
+              "If hook trust is unknown, keep using manual agent-crystallize checkpoint/now before compaction or handoff.",
+            ]
+          : ["Use agent-crystallize checkpoint during long work and agent-crystallize now before handoff or compaction."]
         : ["Run agent-crystallize init in this repo.", "Run agent-crystallize setup --codex or --claude for harness-global pointers."],
   };
 }
@@ -854,6 +862,52 @@ function checkManagedPointer(name: string, path: string) {
     path,
     required: false,
     status: body.includes(managedStart) && body.includes("agent-crystallize") ? "ok" : existsSync(path) ? "missing_pointer" : "missing_optional",
+  };
+}
+
+function checkHookConfig() {
+  const codexHooksJson = resolve(homedir(), ".codex", "hooks.json");
+  const codexConfigToml = resolve(homedir(), ".codex", "config.toml");
+  const claudeSettingsJson = resolve(homedir(), ".claude", "settings.json");
+  const claudeSettingsLocalJson = resolve(homedir(), ".claude", "settings.local.json");
+  return [
+    checkHookConfigFile("hooks:codex:hooks-json", codexHooksJson, "codex"),
+    checkHookConfigFile("hooks:codex:config-toml", codexConfigToml, "codex"),
+    checkHookConfigFile("hooks:claude:settings-json", claudeSettingsJson, "claude-code"),
+    checkHookConfigFile("hooks:claude:settings-local-json", claudeSettingsLocalJson, "claude-code"),
+  ];
+}
+
+function checkHookConfigFile(name: string, path: string, harness: string) {
+  if (!existsSync(path)) {
+    return {
+      name,
+      path,
+      required: false,
+      status: "missing_optional",
+      detail: "No hook config file found at this path.",
+    };
+  }
+  const body = readFileSync(path, "utf8");
+  const hasAgentCrystallize = body.includes("agent-crystallize");
+  if (!hasAgentCrystallize) {
+    return {
+      name,
+      path,
+      required: false,
+      status: "missing_optional",
+      detail: "Config exists, but no agent-crystallize hook command was found.",
+    };
+  }
+  return {
+    name,
+    path,
+    required: false,
+    status: "needs_harness_verification",
+    detail:
+      harness === "codex"
+        ? "agent-crystallize hook config found. Codex trust is host-internal: open /hooks and trust new or changed hook definitions before relying on them."
+        : "agent-crystallize hook config found. Verify visibility and failures with Claude Code /hooks and debug logs before relying on hooks.",
   };
 }
 
@@ -1637,6 +1691,7 @@ Doctor options:
   --repo <path>             Repo to inspect; default cwd
   --codex                   Check ~/.codex/AGENTS.md managed pointer
   --claude                  Check ~/.claude/CLAUDE.md managed pointer
+  --hooks                   Check common hook config locations and print trust/verification reminders
 
 Crystal/checkpoint options:
   --repo <path>              Repo to crystallize; default cwd

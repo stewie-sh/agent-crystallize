@@ -240,6 +240,7 @@ Doctor options:
 --repo <path>             Repo to inspect; default cwd
 --codex                   Check ~/.codex/AGENTS.md managed pointer
 --claude                  Check ~/.claude/CLAUDE.md managed pointer
+--hooks                   Check common hook config locations and print trust/verification reminders
 ```
 
 Crystal/checkpoint options:

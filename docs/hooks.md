@@ -140,6 +140,16 @@ Troubleshoot in this order:
 4. Confirm generated artifacts or hook state changed under `.agent-crystals/`
    or `~/.agent-crystallize/hooks`.
 
+Use `doctor --hooks` as a local reminder and config audit:
+
+```bash
+agent-crystallize doctor --codex --claude --hooks
+```
+
+The doctor can report common hook config files and remind you to verify/trust
+them. It cannot prove Codex trust state, because an untrusted Codex hook is
+skipped before the hook command is invoked.
+
 For a minimal command-resolution smoke test, pipe sample hook JSON into the
 same command or wrapper used by the harness:
 
