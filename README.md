@@ -139,6 +139,27 @@ keeps them ignored so private dogfood traces do not become public accidentally.
 Public dogfood material should be represented as sanitized Markdown under
 `examples/`.
 
+## Skill Support
+
+`agent-crystallize` includes a public `agent-context-crystallizer` skill using
+the Agent Skills / `SKILL.md` folder format. The skill is a thin wrapper around
+the CLI; the CLI remains the source of truth for artifact generation and
+validation.
+
+Current support matrix:
+
+| Harness | Status | Setup |
+| --- | --- | --- |
+| Codex | first-class install path, setup smoke-tested | `agent-crystallize setup --codex --skills` |
+| Claude Code | first-class install path, setup smoke-tested | `agent-crystallize setup --claude --skills` |
+| Other Agent Skills-compatible harnesses | portable/manual install | copy `skills/agent-context-crystallizer` into the harness skill directory |
+
+For manual installs, make sure the `agent-crystallize` binary is available on
+the agent's `PATH`. The skill follows the open Agent Skills shape, but each
+harness chooses its own discovery directories, trust flow, tool permissions, and
+hook behavior. Treat untested harnesses as compatible-in-format, not guaranteed
+end-to-end support.
+
 ## Why Local First
 
 The first version is intentionally boring infrastructure:

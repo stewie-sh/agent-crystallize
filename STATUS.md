@@ -22,9 +22,11 @@ Crystallization:
 - optional bounded Continuity Tail sections for preserving recent turn order and
   nuance without treating raw messages as durable truth.
 - a public `agent-context-crystallizer` skill wrapper for skill-capable agent
+  harnesses, with first-class setup smoke-tested install paths for Codex and
+  Claude Code and manual portability for other Agent Skills-compatible
   harnesses.
 
-The current npm release is published as `@stewie-sh/agent-crystallize@0.1.8`.
+The current npm release is published as `@stewie-sh/agent-crystallize@0.1.9`.
 
 ## What Is Stable Enough To Review
 
@@ -44,6 +46,9 @@ The current npm release is published as `@stewie-sh/agent-crystallize@0.1.8`.
   artifacts remain local/private-by-default.
 - The skill boundary: shipped skills are thin wrappers around the CLI, not a
   second source of artifact-format truth.
+- The skill support boundary: Codex and Claude Code are first-class setup
+  smoke-tested targets; other Agent Skills-compatible harnesses should use
+  manual install until their discovery and trust flows are tested.
 
 ## What Is Still Draft
 

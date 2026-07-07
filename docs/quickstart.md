@@ -31,6 +31,28 @@ agent-crystallize setup --dry-run --codex --claude
 the selected harnesses. Existing different skill files are not overwritten
 unless you pass `--force`.
 
+## Skill Support Matrix
+
+The bundled skill uses the Agent Skills / `SKILL.md` folder format. It is a
+thin wrapper around the CLI, so the `agent-crystallize` binary must be available
+on the agent's `PATH`.
+
+| Harness | Status | Command |
+| --- | --- | --- |
+| Codex | first-class install path, setup smoke-tested | `agent-crystallize setup --codex --skills` |
+| Claude Code | first-class install path, setup smoke-tested | `agent-crystallize setup --claude --skills` |
+| Other Agent Skills-compatible harnesses | portable/manual install | copy `skills/agent-context-crystallizer` into that harness's skill directory |
+
+Manual install example from this repo or from the npm package contents:
+
+```bash
+cp -R skills/agent-context-crystallizer <target-skill-dir>/
+```
+
+The folder format is portable; discovery paths, hook support, trust prompts,
+and allowed tools are harness-specific. Avoid claiming a harness is supported
+end-to-end until you have tested that harness's install and activation flow.
+
 Hook automation is intentionally opt-in. `agent-crystallize setup --hooks`
 points you to the hook docs, but v0 does not mutate harness hook config
 automatically.
