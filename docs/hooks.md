@@ -108,6 +108,13 @@ Use `--include-transcript-uri` only when transcript paths are safe to preserve.
 By default, the public hook runner does not include transcript paths from hook
 stdin.
 
+If a harness supplies a `continuity_tail`, `continuityTail`, `messages`, or
+`conversation` array in hook stdin, `PreCompact`, `PostCompact`, and `Stop`
+checkpoints include a bounded Continuity Tail section. The tail is redacted,
+size-limited, hash-labeled, and marked as raw continuity evidence rather than
+durable truth. Disable it with `--no-continuity-tail` or adjust the budget with
+`--continuity-tail-max-chars`.
+
 ## Deduplication
 
 The hook runner keeps a small state file to avoid obvious duplication:

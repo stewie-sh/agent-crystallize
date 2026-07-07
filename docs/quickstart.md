@@ -18,6 +18,7 @@ pointer for your coding-agent harness:
 ```bash
 agent-crystallize setup --codex
 agent-crystallize setup --claude
+agent-crystallize setup --skills --codex --claude
 ```
 
 Use `--dry-run` first if you want to inspect planned writes:
@@ -25,6 +26,10 @@ Use `--dry-run` first if you want to inspect planned writes:
 ```bash
 agent-crystallize setup --dry-run --codex --claude
 ```
+
+`--skills` installs the public `agent-context-crystallizer` skill wrapper for
+the selected harnesses. Existing different skill files are not overwritten
+unless you pass `--force`.
 
 Hook automation is intentionally opt-in. `agent-crystallize setup --hooks`
 points you to the hook docs, but v0 does not mutate harness hook config
@@ -175,6 +180,25 @@ agent-crystallize checkpoint \
 
 Use only allowlisted, non-secret fields. Do not pass broad environment dumps,
 tokens, cookies, API keys, or secret-bearing session-env files.
+
+## Add A Continuity Tail
+
+Use Continuity Tail when the immediate turn order matters after compaction, but
+the content is not yet promoted durable knowledge. Keep it short and bounded:
+
+```bash
+agent-crystallize checkpoint \
+  --body "Pre-compact handoff after auth-debug discussion." \
+  --continuity-tail "user: The failing case only happens after token refresh." \
+  --continuity-tail "assistant: I will inspect refresh-token storage before changing auth rules." \
+  --continuity-tail-max-chars 8000
+```
+
+The generated section is labeled raw continuity evidence. Restore precedence is:
+latest user instruction > harness compaction summary > distilled checkpoint
+state > Continuity Tail for nuance/order recovery. The CLI redacts common token,
+secret, cookie, authorization, npm token, API-key, and JWT patterns, but you
+should still avoid pasting sensitive raw transcripts.
 
 ## Validate Local Crystals
 

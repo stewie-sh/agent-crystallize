@@ -16,7 +16,9 @@ Crystallization keeps the work recoverable.
 `agent-crystallize` writes durable Markdown artifacts that help future Codex,
 Claude Code, Cursor, or other coding-agent sessions resume from the actual work
 state: current focus, decisions, evidence, open loops, changed files, and next
-actions.
+actions. When turn order matters, it can also include a bounded Continuity Tail:
+redacted recent messages used only for nuance recovery, not as promoted durable
+knowledge.
 
 It is the first open-source slice of **Agent Context Crystallization**: the
 practice of turning long-running agent work into durable, provenance-backed
@@ -101,7 +103,7 @@ repo:
 ```bash
 npm install -g @stewie-sh/agent-crystallize
 
-agent-crystallize setup --codex
+agent-crystallize setup --codex --skills
 agent-crystallize init
 agent-crystallize doctor
 ```
@@ -218,6 +220,7 @@ Setup options:
 --all                     Configure all supported global harness pointers
 --codex                   Add/update ~/.codex/AGENTS.md managed pointer
 --claude                  Add/update ~/.claude/CLAUDE.md managed pointer
+--skills                  Install public agent-context-crystallizer skill files for selected harnesses
 --hooks                   Report hook setup docs; v0 does not mutate hook config
 --protocol <path>         Protocol path; default ~/.agents/context-persistence-protocol.md
 ```
@@ -270,6 +273,8 @@ Crystal/checkpoint options:
 --source-ref <ref>         Source pointer such as file:line or transcript range; repeatable
 --model <name>             Model name if safe and useful to record
 --provenance <key=value>   Extra safe provenance field; repeatable
+--continuity-tail <entry>  Add bounded raw continuity entry, e.g. "user: latest correction"; repeatable
+--continuity-tail-max-chars <n>  Max rendered continuity-tail content budget; default 12000
 --decision <text>          Add a decision bullet; repeatable
 --finding <text>           Add a finding bullet; repeatable
 --open-loop <text>         Add an open-loop bullet; repeatable
@@ -311,6 +316,8 @@ Hook options:
 --max-pointers <count>           SessionStart local artifact pointers; default 3
 --strict-precompact              Exit non-zero if PreCompact checkpoint fails
 --include-transcript-uri         Include transcript_path from hook stdin when supplied
+--no-continuity-tail             Do not include hook-provided continuity_tail/messages arrays
+--continuity-tail-max-chars <n>  Max rendered continuity-tail content budget; default 12000
 ```
 
 Hook compaction behavior:

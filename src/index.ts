@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, fstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -124,6 +125,7 @@ function setup(rest: string[]) {
   const codex = all || takeBooleanFlag(rest, "--codex");
   const claude = all || takeBooleanFlag(rest, "--claude");
   const hooks = takeBooleanFlag(rest, "--hooks");
+  const skills = takeBooleanFlag(rest, "--skills");
   const protocolPath = resolve(expandHome(takeFlag(rest, "--protocol") ?? "~/.agents/context-persistence-protocol.md"));
   if (rest.length > 0) throw new Error(`Unexpected setup arguments: ${rest.join(" ")}`);
 
@@ -145,6 +147,12 @@ function setup(rest: string[]) {
       }),
     );
   }
+  if (skills) {
+    const installCodexSkill = codex || all || (!codex && !claude);
+    const installClaudeSkill = claude || all || (!codex && !claude);
+    if (installCodexSkill) actions.push(...installSkill(resolve(homedir(), ".codex", "skills", "agent-context-crystallizer"), { dryRun, force }));
+    if (installClaudeSkill) actions.push(...installSkill(resolve(homedir(), ".claude", "skills", "agent-context-crystallizer"), { dryRun, force }));
+  }
   if (hooks) {
     actions.push({
       path: "docs/hooks.md",
@@ -161,6 +169,7 @@ function setup(rest: string[]) {
     codexConfigured: codex,
     claudeConfigured: claude,
     hooksRequested: hooks,
+    skillsRequested: skills,
     actions,
     nextActions:
       codex || claude
@@ -319,7 +328,9 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   const readStdin = takeBooleanFlag(rest, "--stdin");
   const fromCheckpoints = takeFlag(rest, "--from-checkpoints");
   const checkpointDir = takeFlag(rest, "--checkpoint-dir");
-  const structured = takeStructuredFields(rest);
+  const continuityTailMaxChars = Number(takeFlag(rest, "--continuity-tail-max-chars") ?? 12000);
+  const continuityTailSource = takeFlag(rest, "--continuity-tail-source") ?? "cli";
+  const structured = takeStructuredFields(rest, continuityTailSource);
   const outDir = resolve(repo, takeFlag(rest, "--out-dir") ?? (kind === "checkpoint" ? ".agent-crystals/checkpoints" : ".agent-crystals/sessions"));
   const body = bodyFlag ?? (readStdin ? await readStdinBody() : rest.join(" ").trim());
 
@@ -327,6 +338,11 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   if (!["fast", "standard", "deep"].includes(budget)) {
     throw new Error(`Invalid --budget ${budget}; expected fast, standard, or deep.`);
   }
+  if (!Number.isFinite(continuityTailMaxChars) || continuityTailMaxChars < 0) {
+    throw new Error("--continuity-tail-max-chars must be a non-negative number.");
+  }
+  structured.continuityTailMaxChars = continuityTailMaxChars;
+  structured.continuityTail = boundContinuityTail(structured.continuityTail, continuityTailMaxChars);
   if (fromCheckpoints && fromCheckpoints !== "latest") {
     throw new Error(`Invalid --from-checkpoints ${fromCheckpoints}; expected latest.`);
   }
@@ -389,6 +405,8 @@ async function hook(rest: string[]) {
   const strictPrecompact = takeBooleanFlag(rest, "--strict-precompact");
   const maxPointers = Number(takeFlag(rest, "--max-pointers") ?? 3);
   const includeTranscriptUri = takeBooleanFlag(rest, "--include-transcript-uri");
+  const noContinuityTail = takeBooleanFlag(rest, "--no-continuity-tail");
+  const continuityTailMaxChars = Number(takeFlag(rest, "--continuity-tail-max-chars") ?? 12000);
   if (rest.length > 0) {
     throw new Error(`Unexpected hook arguments: ${rest.join(" ")}`);
   }
@@ -396,7 +414,11 @@ async function hook(rest: string[]) {
   if (!Number.isFinite(stopCheckpointMs) || stopCheckpointMs < 0) throw new Error("--stop-checkpoint-ms must be a non-negative number.");
   if (!Number.isFinite(dedupeWindowMs) || dedupeWindowMs < 0) throw new Error("--dedupe-window-ms must be a non-negative number.");
   if (!Number.isFinite(maxPointers) || maxPointers < 1) throw new Error("--max-pointers must be a positive number.");
+  if (!Number.isFinite(continuityTailMaxChars) || continuityTailMaxChars < 0) {
+    throw new Error("--continuity-tail-max-chars must be a non-negative number.");
+  }
   if (!isHookEvent(event)) throw new Error(`Invalid --event ${event}; expected one of ${hookEvents.join(", ")}.`);
+  const continuityTail = noContinuityTail ? [] : extractContinuityTailFromHookInput(input, continuityTailMaxChars);
 
   const statePath = join(stateDir, "state.json");
   const state = loadHookState(statePath);
@@ -464,6 +486,8 @@ async function hook(rest: string[]) {
           event,
           input,
           includeTranscriptUri,
+          continuityTail,
+          continuityTailMaxChars,
           body: [
             "Pre-compact checkpoint requested by lifecycle hook.",
             `Trigger: ${stringField(input, "trigger") ?? "unknown"}.`,
@@ -524,6 +548,8 @@ async function hook(rest: string[]) {
         event,
         input,
         includeTranscriptUri,
+        continuityTail,
+        continuityTailMaxChars,
         body: [
           "Post-compact summary captured by lifecycle hook.",
           `Trigger: ${stringField(input, "trigger") ?? "unknown"}.`,
@@ -564,6 +590,8 @@ async function hook(rest: string[]) {
           event,
           input,
           includeTranscriptUri,
+          continuityTail,
+          continuityTailMaxChars,
           body: [
             "Stop hook created a cadence checkpoint after sustained uncheckpointed activity.",
             `Last activity: ${projectState.lastActivityAt ?? "unknown"}.`,
@@ -594,6 +622,8 @@ async function createHookCheckpoint(input: {
   event: HookEvent;
   input: Record<string, unknown>;
   includeTranscriptUri: boolean;
+  continuityTail: ContinuityTailEntry[];
+  continuityTailMaxChars: number;
   body: string;
   decision: string;
   finding: string;
@@ -643,6 +673,14 @@ async function createHookCheckpoint(input: {
   if (sessionId) args.push("--session-id", sessionId);
   const transcriptUri = stringField(input.input, "transcript_path") ?? stringField(input.input, "transcriptUri");
   if (input.includeTranscriptUri && transcriptUri) args.push("--transcript-uri", transcriptUri);
+  if (input.continuityTail.length > 0) {
+    args.push("--continuity-tail-max-chars", String(input.continuityTailMaxChars));
+    args.push("--continuity-tail-source", "hook-stdin");
+    for (const entry of input.continuityTail) {
+      const timestamp = entry.timestamp ? `[${entry.timestamp}] ` : "";
+      args.push("--continuity-tail", `${timestamp}${entry.role}: ${entry.content}`);
+    }
+  }
   args.push("--body", input.body);
   return crystallize(args, "checkpoint");
 }
@@ -658,6 +696,46 @@ function readJsonStdinIfAvailable(): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function extractContinuityTailFromHookInput(input: Record<string, unknown>, maxChars: number): ContinuityTailEntry[] {
+  const candidates =
+    arrayField(input, "continuity_tail") ??
+    arrayField(input, "continuityTail") ??
+    arrayField(input, "messages") ??
+    arrayField(input, "conversation") ??
+    [];
+  const entries: ContinuityTailEntry[] = [];
+  for (const candidate of candidates.slice(-24)) {
+    if (typeof candidate === "string") {
+      entries.push(parseContinuityTailEntry(candidate, "hook-stdin"));
+      continue;
+    }
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const record = candidate as Record<string, unknown>;
+    const role = stringField(record, "role") ?? stringField(record, "speaker") ?? stringField(record, "type") ?? "message";
+    const content =
+      stringField(record, "content") ??
+      stringField(record, "text") ??
+      stringField(record, "message") ??
+      stringField(record, "body");
+    if (!content) continue;
+    entries.push(
+      makeContinuityTailEntry({
+        role,
+        content,
+        timestamp: stringField(record, "timestamp") ?? stringField(record, "created_at") ?? stringField(record, "time"),
+        id: stringField(record, "id") ?? stringField(record, "turn_id") ?? stringField(record, "message_id"),
+        source: "hook-stdin",
+      }),
+    );
+  }
+  return boundContinuityTail(entries, maxChars);
+}
+
+function arrayField(input: Record<string, unknown>, key: string): unknown[] | undefined {
+  const value = input[key];
+  return Array.isArray(value) ? value : undefined;
 }
 
 function loadHookState(path: string): HookState {
@@ -744,6 +822,31 @@ function stableKey(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
+function normalizeForHash(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function sanitizeRole(value: string) {
+  const role = value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return role || "message";
+}
+
+function redactSensitiveText(value: string) {
+  return value
+    .replace(/\b(npm_[A-Za-z0-9]{20,})\b/g, "[REDACTED_NPM_TOKEN]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, "[REDACTED_API_KEY]")
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/gi, "$1[REDACTED]")
+    .replace(/\b(authorization|api[_-]?key|token|secret|password|cookie)\b\s*[:=]\s*["']?[^"'\s,;]{8,}/gi, "$1=[REDACTED]")
+    .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, "[REDACTED_JWT]");
+}
+
+function indentContinuation(value: string) {
+  return value
+    .split("\n")
+    .map((line) => (line.trim() ? line : ""))
+    .join("\n  ");
+}
+
 function isHookEvent(value: string): value is HookEvent {
   return (hookEvents as readonly string[]).includes(value);
 }
@@ -789,6 +892,30 @@ function writeIfChanged(path: string, content: string, options: { dryRun: boolea
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content, "utf8");
   return { path, action: exists ? "updated" : "created" };
+}
+
+function installSkill(targetDir: string, options: { dryRun: boolean; force: boolean }): FileAction[] {
+  const sourceDir = resolve(packageRoot(), "skills", "agent-context-crystallizer");
+  const files = [
+    ["SKILL.md", "SKILL.md"],
+    [join("agents", "openai.yaml"), join("agents", "openai.yaml")],
+  ];
+  return files.map(([sourceRelative, targetRelative]) => {
+    const sourcePath = resolve(sourceDir, sourceRelative);
+    const targetPath = resolve(targetDir, targetRelative);
+    if (!existsSync(sourcePath)) {
+      return {
+        path: targetPath,
+        action: "skipped",
+        detail: `source skill file missing from package: ${sourcePath}`,
+      };
+    }
+    return writeIfChanged(targetPath, readFileSync(sourcePath, "utf8"), options);
+  });
+}
+
+function packageRoot() {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
 function upsertManagedBlock(path: string, block: string, options: { dryRun: boolean; heading: string }): FileAction {
@@ -1189,10 +1316,22 @@ interface CheckpointSummary {
   focus: string;
 }
 
+interface ContinuityTailEntry {
+  role: string;
+  content: string;
+  timestamp?: string;
+  id?: string;
+  hash: string;
+  source?: string;
+  truncated?: boolean;
+}
+
 interface StructuredFields {
   topics: string[];
   relations: RelationHint[];
   provenance: ProvenanceFields;
+  continuityTail: ContinuityTailEntry[];
+  continuityTailMaxChars: number;
   decisions: string[];
   findings: string[];
   openLoops: string[];
@@ -1397,6 +1536,8 @@ ${currentFocus}
 
 ${renderCheckpointTrail(input.kind, input.checkpointTrail)}
 
+${renderContinuityTail(input.structured.continuityTail, input.structured.continuityTailMaxChars)}
+
 ## Topics
 
 ${renderBullets(input.structured.topics, "No explicit topics captured.")}
@@ -1508,6 +1649,35 @@ ${checkpoints
   .join("\n")}`;
 }
 
+function renderContinuityTail(entries: ContinuityTailEntry[], maxChars: number) {
+  if (entries.length === 0) return "";
+  return `## Continuity Tail
+
+Raw bounded conversational tail for recovering immediate flow after compaction or cross-harness handoff. This section is continuity evidence, not promoted durable knowledge unless distilled into Decisions, Findings, Memory Candidates, or another reviewed artifact.
+
+- Restore precedence: latest user instruction > harness compaction summary > distilled checkpoint state > this tail for nuance/order recovery.
+- Budget: max ${maxChars} chars before rendering overhead; entries may be redacted, excerpted, or represented by pointers.
+- Dedupe key: each entry includes hash=sha256(normalized redacted content), shortened for display.
+
+${entries.map(renderContinuityTailEntry).join("\n\n")}`;
+}
+
+function renderContinuityTailEntry(entry: ContinuityTailEntry) {
+  const meta = [
+    `role=${entry.role}`,
+    entry.timestamp ? `time=${entry.timestamp}` : undefined,
+    entry.id ? `id=${entry.id}` : undefined,
+    entry.source ? `source=${entry.source}` : undefined,
+    `hash=${entry.hash}`,
+    entry.truncated ? "truncated=true" : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `- ${meta}
+
+  ${indentContinuation(entry.content)}`;
+}
+
 async function readStdinBody() {
   let body = "";
   for await (const chunk of process.stdin) {
@@ -1516,11 +1686,13 @@ async function readStdinBody() {
   return body.trim();
 }
 
-function takeStructuredFields(values: string[]): StructuredFields {
+function takeStructuredFields(values: string[], continuityTailSource: string): StructuredFields {
   return {
     topics: [...takeRepeatedFlag(values, "--topic"), ...takeRepeatedFlag(values, "--tag")],
     relations: parseRelationHints(takeRepeatedFlag(values, "--relation")),
     provenance: takeProvenanceFields(values),
+    continuityTail: parseContinuityTailArgs(takeRepeatedFlag(values, "--continuity-tail"), continuityTailSource),
+    continuityTailMaxChars: 12000,
     decisions: takeRepeatedFlag(values, "--decision"),
     findings: takeRepeatedFlag(values, "--finding"),
     openLoops: takeRepeatedFlag(values, "--open-loop"),
@@ -1546,6 +1718,84 @@ function takeProvenanceFields(values: string[]): ProvenanceFields {
     sourceRefs: takeRepeatedFlag(values, "--source-ref"),
     custom: parseProvenancePairs(takeRepeatedFlag(values, "--provenance")),
   };
+}
+
+function parseContinuityTailArgs(values: string[], source: string): ContinuityTailEntry[] {
+  return values.map((value) => parseContinuityTailEntry(value, source));
+}
+
+function parseContinuityTailEntry(value: string, source: string): ContinuityTailEntry {
+  const trimmed = value.trim();
+  const bracketMatch = trimmed.match(/^\[([^\]]+)]\s*([a-zA-Z][\w-]{0,31})\s*:\s*([\s\S]+)$/);
+  if (bracketMatch) {
+    return makeContinuityTailEntry({
+      timestamp: bracketMatch[1].trim(),
+      role: bracketMatch[2].trim(),
+      content: bracketMatch[3].trim(),
+      source,
+    });
+  }
+  const pipeMatch = trimmed.match(/^([^|]{1,80})\|([a-zA-Z][\w-]{0,31})\s*:\s*([\s\S]+)$/);
+  if (pipeMatch) {
+    return makeContinuityTailEntry({
+      timestamp: pipeMatch[1].trim(),
+      role: pipeMatch[2].trim(),
+      content: pipeMatch[3].trim(),
+      source,
+    });
+  }
+  const roleMatch = trimmed.match(/^([a-zA-Z][\w-]{0,31})\s*:\s*([\s\S]+)$/);
+  if (roleMatch) {
+    return makeContinuityTailEntry({
+      role: roleMatch[1].trim(),
+      content: roleMatch[2].trim(),
+      source,
+    });
+  }
+  return makeContinuityTailEntry({ role: "note", content: trimmed, source });
+}
+
+function makeContinuityTailEntry(input: {
+  role: string;
+  content: string;
+  timestamp?: string;
+  id?: string;
+  source?: string;
+  truncated?: boolean;
+}): ContinuityTailEntry {
+  const content = redactSensitiveText(input.content);
+  return {
+    role: sanitizeRole(input.role),
+    content,
+    timestamp: input.timestamp,
+    id: input.id,
+    source: input.source,
+    truncated: input.truncated,
+    hash: stableKey(normalizeForHash(`${input.role}\n${content}`)),
+  };
+}
+
+function boundContinuityTail(entries: ContinuityTailEntry[], maxChars: number): ContinuityTailEntry[] {
+  if (entries.length === 0 || maxChars === 0) return [];
+  const result: ContinuityTailEntry[] = [];
+  let used = 0;
+  for (const entry of [...entries].reverse()) {
+    const fixedOverhead = 160 + entry.role.length + (entry.timestamp?.length ?? 0) + (entry.id?.length ?? 0);
+    const remaining = maxChars - used - fixedOverhead;
+    if (remaining <= 0) break;
+    const content =
+      entry.content.length > remaining
+        ? `${entry.content.slice(0, Math.max(0, remaining - 20)).trimEnd()}... [truncated]`
+        : entry.content;
+    result.push({
+      ...entry,
+      content,
+      truncated: entry.truncated || content !== entry.content,
+      hash: stableKey(normalizeForHash(`${entry.role}\n${content}`)),
+    });
+    used += fixedOverhead + content.length;
+  }
+  return result.reverse();
 }
 
 function parseRelationHints(values: string[]): RelationHint[] {
@@ -1686,6 +1936,7 @@ Setup options:
   --all                     Configure all supported global harness pointers
   --codex                   Add/update ~/.codex/AGENTS.md managed pointer
   --claude                  Add/update ~/.claude/CLAUDE.md managed pointer
+  --skills                  Install public agent-context-crystallizer skill files for selected harnesses
   --hooks                   Report hook setup docs; v0 does not mutate hook config
   --protocol <path>         Protocol path; default ~/.agents/context-persistence-protocol.md
 
@@ -1729,6 +1980,8 @@ Crystal/checkpoint options:
   --source-ref <ref>         Source pointer such as file:line or transcript range; repeatable
   --model <name>             Model name if safe and useful to record
   --provenance <key=value>   Extra safe provenance field; repeatable
+  --continuity-tail <entry>  Add bounded raw continuity entry, e.g. "user: latest correction"; repeatable
+  --continuity-tail-max-chars <n>  Max rendered continuity-tail content budget; default 12000
   --decision <text>          Add a decision bullet; repeatable
   --finding <text>           Add a finding bullet; repeatable
   --open-loop <text>         Add an open-loop bullet; repeatable
@@ -1761,5 +2014,7 @@ Hook options:
   --max-pointers <count>           SessionStart local artifact pointers; default 3
   --strict-precompact              Exit non-zero if PreCompact checkpoint fails
   --include-transcript-uri         Include transcript_path from hook stdin when supplied
+  --no-continuity-tail             Do not include hook-provided continuity_tail/messages arrays
+  --continuity-tail-max-chars <n>  Max rendered continuity-tail content budget; default 12000
 `);
 }

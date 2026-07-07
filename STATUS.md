@@ -19,8 +19,12 @@ Crystallization:
   the Agent Context Crystallization category.
 - an experimental local-first hook runner for Codex and Claude Code lifecycle
   events, including compact-resume bootstrap output.
+- optional bounded Continuity Tail sections for preserving recent turn order and
+  nuance without treating raw messages as durable truth.
+- a public `agent-context-crystallizer` skill wrapper for skill-capable agent
+  harnesses.
 
-The current npm release is published as `@stewie-sh/agent-crystallize@0.1.4`.
+The current npm release is published as `@stewie-sh/agent-crystallize@0.1.8`.
 
 ## What Is Stable Enough To Review
 
@@ -38,6 +42,8 @@ The current npm release is published as `@stewie-sh/agent-crystallize@0.1.4`.
   by default; sanitized fixtures belong under `examples/`.
 - The hook boundary: hooks reduce manual checkpointing burden, but generated
   artifacts remain local/private-by-default.
+- The skill boundary: shipped skills are thin wrappers around the CLI, not a
+  second source of artifact-format truth.
 
 ## What Is Still Draft
 
@@ -47,6 +53,7 @@ The current npm release is published as `@stewie-sh/agent-crystallize@0.1.4`.
 - The relationship between local artifacts and optional future import/sync
   adapters.
 - The hook installer/plugin story for Codex and Claude Code.
+- The best long-term installation/update flow for skills across harnesses.
 - Post-release feedback from real Codex and Claude Code hook usage.
 - GitHub Actions release publishing is configured for version tags and verified
   with npm Trusted Publishing as of `v0.1.4`; no npm token is committed here.

@@ -105,6 +105,39 @@ session-env files. If a harness does not expose safe session identifiers, leave
 the fields blank and capture a source ref such as a local checkpoint path, git
 commit, or issue URL instead.
 
+## Continuity Tail
+
+`## Continuity Tail` is optional raw continuity evidence for recovering local
+conversation flow after compaction or cross-harness handoff. It is intentionally
+lower-authority than distilled sections.
+
+Use it when:
+
+- the last few user/assistant turns contain nuance that a compaction summary may
+  drop;
+- a future agent needs turn order to understand what changed;
+- the content is useful but not ready to become a decision, finding, memory
+  candidate, or rule.
+
+Do not use it to dump full transcripts. Prefer transcript pointers for large
+source material.
+
+```bash
+agent-crystallize checkpoint \
+  --body "Ready to compact after debugging deployment hooks." \
+  --continuity-tail "user: The hook failed only after I skipped /hooks review." \
+  --continuity-tail "assistant: Treat Codex hook trust and runtime PATH as separate failure layers." \
+  --continuity-tail-max-chars 8000
+```
+
+Continuity entries are redacted for common secrets and assigned a short
+sha256-based dedupe hash. Restore precedence:
+
+1. Latest user instruction.
+2. Harness compaction summary.
+3. Distilled checkpoint/crystal state.
+4. Continuity Tail for nuance and ordering.
+
 ## Topics And Relation Hints
 
 Topics and relation hints are intentionally lightweight. They help future tools

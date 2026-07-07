@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agent Context Crystallizer"
+  short_description: "Checkpoint and crystallize agent work context"
+  default_prompt: "Use $agent-context-crystallizer to preserve the current work context before compaction or handoff."
+
+policy:
+  allow_implicit_invocation: true
