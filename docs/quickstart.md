@@ -52,6 +52,10 @@ checkpoint, and writes `.agent-crystals/manifest.json`.
 Generated crystals are local work artifacts by default. Commit them only when
 they are intentionally reviewed and sanitized.
 
+The generated global/repo instruction pointers include a small hook reminder:
+if hooks are configured or continuity feels broken, run `agent-crystallize
+doctor --hooks` and verify the host `/hooks` view.
+
 If you use hooks, run the hook-aware doctor after editing hook config:
 
 ```bash

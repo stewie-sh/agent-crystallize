@@ -164,7 +164,11 @@ function setup(rest: string[]) {
     actions,
     nextActions:
       codex || claude
-        ? ["Run agent-crystallize doctor.", "Run agent-crystallize init inside each repo that should keep local crystals."]
+        ? [
+            "Run agent-crystallize doctor.",
+            "If hooks are configured or continuity feels broken, run agent-crystallize doctor --hooks and verify host /hooks.",
+            "Run agent-crystallize init inside each repo that should keep local crystals.",
+          ]
         : [
             "Run agent-crystallize setup --codex or --claude to add a thin global harness pointer.",
             "Run agent-crystallize init inside each repo that should keep local crystals.",
@@ -936,7 +940,12 @@ agent-crystallize now --from-checkpoints latest --body "Ready to hand off."
 agent-crystallize validate
 agent-crystallize manifest --write
 agent-crystallize doctor
+agent-crystallize doctor --hooks
 \`\`\`
+
+If hooks are installed or continuity feels broken, verify the host harness
+\`/hooks\` view. Codex may skip new or changed hooks until they are reviewed and
+trusted.
 `;
 }
 
@@ -948,6 +957,7 @@ function renderHarnessPointer(harnessName: string) {
 - Use \`agent-crystallize now --from-checkpoints latest\` for fuller session crystals.
 - Generated crystals are work context and evidence, not hidden chain-of-thought.
 - Keep private/local artifacts out of public repos unless intentionally sanitized.
+- If hooks are configured or continuity feels broken, run \`agent-crystallize doctor --hooks\` and verify the host \`/hooks\` view. Codex may skip new or changed hooks until trusted.
 
 Harness: ${harnessName}.`;
 }
@@ -957,6 +967,7 @@ function renderRepoPointer(project: string) {
 
 - This repo may keep local work-context artifacts under \`.agent-crystals/\`.
 - Start with \`agent-crystallize doctor\` if continuity feels broken.
+- If hooks are configured or continuity still feels broken, run \`agent-crystallize doctor --hooks\` and verify the host \`/hooks\` view.
 - Use \`agent-crystallize checkpoint --project ${project} --body "<state, decision, open loop, next action>"\` during long work.
 - Use \`agent-crystallize now --from-checkpoints latest --project ${project} --body "<handoff>"\` before handoff or compaction.
 - Treat generated crystals as local/private by default. Commit only sanitized examples or intentionally reviewed artifacts.`;

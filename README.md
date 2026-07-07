@@ -327,7 +327,9 @@ skip new or changed hooks until this trust step is done. For Claude Code, use
 `/hooks` and the debug log/transcript view to confirm hooks are visible and
 firing. If a hook command depends on NVM or shell-managed binaries, prefer an
 absolute command path or wrapper script because hook processes may not inherit
-your interactive shell `PATH`.
+your interactive shell `PATH`. The generated setup/init instruction pointers
+also include a soft reminder to run `agent-crystallize doctor --hooks` and check
+the host `/hooks` view when continuity feels broken.
 
 Read body text from stdin:
 
