@@ -320,6 +320,14 @@ Hook compaction behavior:
 - `UserPromptSubmit` prints one post-compact fallback bootstrap if the harness
   did not surface the compact-resume context before the next prompt.
 
+Hook activation is harness-specific. For Codex, open `/hooks` after installing
+or changing hook definitions, then review and trust the changed hooks. Codex may
+skip new or changed hooks until this trust step is done. For Claude Code, use
+`/hooks` and the debug log/transcript view to confirm hooks are visible and
+firing. If a hook command depends on NVM or shell-managed binaries, prefer an
+absolute command path or wrapper script because hook processes may not inherit
+your interactive shell `PATH`.
+
 Read body text from stdin:
 
 ```bash

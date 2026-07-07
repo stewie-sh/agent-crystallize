@@ -6,6 +6,10 @@ checkpointing burden during long-running agent sessions.
 Hooks are optional. The CLI works without them, and manual `checkpoint` / `now`
 commands remain the safest starting point.
 
+Hooks are also harness-controlled. Installing or editing hook config is not the
+same thing as proving the hook is active. Always verify the host harness after
+changing hook files.
+
 ## Ownership Model
 
 - `agent-crystallize` owns local artifact writing under `.agent-crystals/`.
@@ -61,6 +65,24 @@ Codex loads hooks from user or project config layers such as
 `~/.codex/hooks.json` or `<repo>/.codex/hooks.json`. Review and trust hook
 commands in Codex before relying on them.
 
+Important Codex behavior:
+
+- Open `/hooks` after first install and after every hook command/config change.
+  Review the hook and press `t` to trust it.
+- Codex records trust against the current hook definition. New or changed hooks
+  are skipped until trusted again.
+- Continuing without review means the hook may be present in config but will not
+  run.
+- Project-local hooks also depend on the project config layer being trusted.
+- Do not use `--dangerously-bypass-hook-trust` for normal interactive work; it
+  is only for automation that already vets hook sources out-of-band.
+
+After the trust gate, command resolution is a separate failure mode. Hook
+processes may not inherit your interactive shell or NVM-managed `PATH`. If
+`agent-crystallize` or `node` is installed through a shell manager, prefer an
+absolute command path or a small wrapper script that sets a known `PATH`, then
+point Codex at the wrapper. Re-run `/hooks` after changing that wrapper command.
+
 ## Claude Code Example
 
 See
@@ -69,6 +91,12 @@ See
 Claude Code command hooks receive event JSON on stdin. `SessionStart` uses
 Claude's `hookSpecificOutput.additionalContext` shape so the bootstrap is
 available to the agent without printing noisy terminal output.
+
+Use `/hooks` in Claude Code to confirm the hooks are visible under the expected
+events. For failures, check the transcript hook summaries and enable a debug log
+with Claude Code's debug controls. As with Codex, avoid assuming your
+interactive shell startup files or NVM `PATH` are available inside hook
+commands.
 
 ## Privacy
 
@@ -102,6 +130,23 @@ context on `SessionStart`, `PostCompact`, and the first `UserPromptSubmit` after
 compaction, but each harness decides how command stdout or `additionalContext`
 is surfaced to the model. Verify the lifecycle in your harness before relying
 on hooks as the only compaction safety net.
+
+Troubleshoot in this order:
+
+1. Confirm the hook is trusted/enabled in the harness UI (`/hooks` where
+   available).
+2. Confirm the event and matcher actually fire for the action you are testing.
+3. Confirm the command can run in a minimal non-interactive environment.
+4. Confirm generated artifacts or hook state changed under `.agent-crystals/`
+   or `~/.agent-crystallize/hooks`.
+
+For a minimal command-resolution smoke test, pipe sample hook JSON into the
+same command or wrapper used by the harness:
+
+```bash
+printf '{"cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Bash"}\n' "$PWD" \
+  | agent-crystallize hook --harness codex --event PostToolUse
+```
 
 Override the defaults with:
 

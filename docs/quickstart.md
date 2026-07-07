@@ -30,6 +30,12 @@ Hook automation is intentionally opt-in. `agent-crystallize setup --hooks`
 points you to the hook docs, but v0 does not mutate harness hook config
 automatically.
 
+If you install hooks manually, treat them as experimental until verified in the
+host harness. Codex requires reviewing and trusting new or changed hook
+definitions in `/hooks`; changed hook commands may be skipped until trusted
+again. Claude Code also has `/hooks` visibility and debug tooling. See
+[docs/hooks.md](hooks.md) before relying on hooks for compaction recovery.
+
 ## Activate A Repo
 
 Run this once in a repo where you want local context artifacts:
@@ -234,3 +240,8 @@ Start with [docs/hooks.md](hooks.md). The hook runner is local-first by default:
 it writes `.agent-crystals/`, stores dedupe/activity state under
 `~/.agent-crystallize/hooks`, and does not require any external memory or hosted
 service.
+
+After installing or changing Codex hooks, open `/hooks`, review the changed hook,
+and trust it. If the hook command depends on NVM or shell-managed binaries, use
+an absolute command path or wrapper script; hook runners may not inherit your
+interactive shell `PATH`.
