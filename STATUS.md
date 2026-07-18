@@ -26,7 +26,7 @@ Crystallization:
   Claude Code and manual portability for other Agent Skills-compatible
   harnesses.
 
-The current npm release is published as `@stewie-sh/agent-crystallize@0.1.9`.
+The current npm release is published as `@stewie-sh/agent-crystallize@0.1.10`.
 
 ## What Is Stable Enough To Review
 
