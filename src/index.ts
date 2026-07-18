@@ -9,11 +9,15 @@ import { fileURLToPath } from "node:url";
 const args = process.argv.slice(2);
 const command = args.shift();
 
-const requiredSections = [
+const canonicalSections = [
   "Header",
   "Current Focus",
   "Durable Framing",
   "Checkpoint Trail",
+  "Continuity Tail",
+  "Topics",
+  "Relation Hints",
+  "Session Provenance",
   "Decisions",
   "Findings",
   "Reality Checks",
@@ -24,6 +28,10 @@ const requiredSections = [
   "Next Actions",
   "Resume Prompt",
 ];
+
+const requiredSections = canonicalSections.filter(
+  (section) => !["Continuity Tail", "Topics", "Relation Hints", "Session Provenance"].includes(section),
+);
 
 const hookEvents = ["SessionStart", "UserPromptSubmit", "PostToolUse", "PostToolBatch", "PreCompact", "PostCompact", "Stop"] as const;
 const managedStart = "<!-- agent-crystallize:context-persistence:start -->";
@@ -118,6 +126,11 @@ interface FileAction {
   detail?: string;
 }
 
+interface RepoConfig {
+  version: 1;
+  project: string;
+}
+
 function setup(rest: string[]) {
   const dryRun = takeBooleanFlag(rest, "--dry-run");
   const force = takeBooleanFlag(rest, "--force");
@@ -187,7 +200,7 @@ function setup(rest: string[]) {
 
 async function init(rest: string[]) {
   const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
-  const project = takeFlag(rest, "--project") ?? basename(repo);
+  const project = resolveProject(repo, takeFlag(rest, "--project"));
   const dryRun = takeBooleanFlag(rest, "--dry-run");
   const noCheckpoint = takeBooleanFlag(rest, "--no-checkpoint");
   const noAgentsMd = takeBooleanFlag(rest, "--no-agents-md");
@@ -200,6 +213,7 @@ async function init(rest: string[]) {
   actions.push(ensureDirectory(resolve(repo, ".agent-crystals"), dryRun));
   actions.push(ensureDirectory(resolve(repo, ".agent-crystals", "checkpoints"), dryRun));
   actions.push(ensureDirectory(resolve(repo, ".agent-crystals", "sessions"), dryRun));
+  actions.push(upsertRepoConfig(repo, project, dryRun));
   actions.push(upsertLocalExclude(repo, dryRun));
   if (!noAgentsMd) {
     actions.push(
@@ -287,6 +301,7 @@ function doctor(rest: string[]) {
     checkPath("repo:.agent-crystals", resolve(repo, ".agent-crystals"), true),
     checkPath("repo:.agent-crystals/checkpoints", resolve(repo, ".agent-crystals", "checkpoints"), true),
     checkPath("repo:.agent-crystals/sessions", resolve(repo, ".agent-crystals", "sessions"), true),
+    checkRepoConfig(repo),
     checkPath("repo:.agent-crystals/manifest.json", resolve(repo, ".agent-crystals", "manifest.json"), false),
     checkPath("repo:AGENTS.md", resolve(repo, "AGENTS.md"), false),
     checkLocalExclude(repo),
@@ -317,7 +332,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
   const budget = takeFlag(rest, "--budget") ?? (kind === "checkpoint" ? "fast" : "standard");
   const scope = takeFlag(rest, "--scope") ?? "project";
-  const project = takeFlag(rest, "--project") ?? basename(repo);
+  const project = resolveProject(repo, takeFlag(rest, "--project"));
   const title =
     takeFlag(rest, "--title") ??
     (kind === "checkpoint"
@@ -630,7 +645,7 @@ async function createHookCheckpoint(input: {
   openLoop: string;
   nextAction: string;
 }) {
-  const project = basename(input.repo) || "project";
+  const project = resolveProject(input.repo);
   const args = [
     "--repo",
     input.repo,
@@ -932,6 +947,47 @@ function upsertManagedBlock(path: string, block: string, options: { dryRun: bool
   return { path, action: exists ? "updated" : "created" };
 }
 
+function resolveProject(repo: string, explicitProject?: string) {
+  if (explicitProject !== undefined) return normalizeProject(explicitProject);
+  const configPath = resolve(repo, ".agent-crystals", "config.json");
+  const config = readRepoConfig(repo);
+  if (existsSync(configPath) && !config) {
+    throw new Error(`Invalid repo config: ${configPath}. Repair it with agent-crystallize init --project <slug>.`);
+  }
+  return config?.project ?? (basename(repo) || "project");
+}
+
+function normalizeProject(project: string) {
+  const normalized = project.trim();
+  if (!normalized) throw new Error("Project name must not be empty.");
+  if (/\r|\n/.test(normalized)) throw new Error("Project name must fit on one line.");
+  return normalized;
+}
+
+function readRepoConfig(repo: string): RepoConfig | undefined {
+  const path = resolve(repo, ".agent-crystals", "config.json");
+  if (!existsSync(path)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoConfig>;
+    if (parsed.version !== 1 || typeof parsed.project !== "string") return undefined;
+    return { version: 1, project: normalizeProject(parsed.project) };
+  } catch {
+    return undefined;
+  }
+}
+
+function upsertRepoConfig(repo: string, project: string, dryRun: boolean): FileAction {
+  const path = resolve(repo, ".agent-crystals", "config.json");
+  const existed = existsSync(path);
+  const content = `${JSON.stringify({ version: 1, project } satisfies RepoConfig, null, 2)}\n`;
+  const current = existed ? readFileSync(path, "utf8") : "";
+  if (current === content) return { path, action: "unchanged" };
+  if (dryRun) return { path, action: existed ? "would_update" : "would_create" };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, "utf8");
+  return { path, action: existed ? "updated" : "created" };
+}
+
 function upsertLocalExclude(repo: string, dryRun: boolean): FileAction {
   const gitRoot = collectGitContext(repo).root;
   if (!gitRoot) {
@@ -971,6 +1027,21 @@ function checkPath(name: string, path: string, required: boolean) {
     path,
     required,
     status: existsSync(path) ? "ok" : required ? "missing" : "missing_optional",
+  };
+}
+
+function checkRepoConfig(repo: string) {
+  const path = resolve(repo, ".agent-crystals", "config.json");
+  if (!existsSync(path)) {
+    return { name: "repo:.agent-crystals/config.json", path, required: true, status: "missing" };
+  }
+  const config = readRepoConfig(repo);
+  return {
+    name: "repo:.agent-crystals/config.json",
+    path,
+    required: true,
+    status: config ? "ok" : "invalid",
+    detail: config ? `project=${config.project}` : "expected { version: 1, project: <non-empty one-line string> }",
   };
 }
 
@@ -1264,6 +1335,7 @@ function validateCrystalFile(repo: string, absolutePath: string): ValidationResu
   const title = extractTitle(markdown);
 
   if (!title) errors.push("missing top-level title");
+  errors.push(...validateSectionStructure(markdown));
 
   for (const section of requiredSections) {
     if (!hasSection(markdown, section)) errors.push(`missing section: ${section}`);
@@ -1439,6 +1511,31 @@ function extractSection(markdown: string, heading: string) {
   return section.trim();
 }
 
+function validateSectionStructure(markdown: string) {
+  const recognized = new Set(canonicalSections);
+  const headings = [...markdown.matchAll(/^##\s+(.+?)\s*$/gm)]
+    .map((match) => match[1].trim())
+    .filter((heading) => recognized.has(heading));
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  let highestCanonicalIndex = -1;
+
+  for (const heading of headings) {
+    if (seen.has(heading)) {
+      if (!errors.includes(`duplicate section: ${heading}`)) errors.push(`duplicate section: ${heading}`);
+      continue;
+    }
+    seen.add(heading);
+    const canonicalIndex = canonicalSections.indexOf(heading);
+    if (canonicalIndex < highestCanonicalIndex) {
+      errors.push(`section out of canonical order: ${heading}`);
+    } else {
+      highestCanonicalIndex = canonicalIndex;
+    }
+  }
+  return errors;
+}
+
 function hasSection(markdown: string, heading: string) {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^## ${escaped}\\s*$`, "m").test(markdown);
@@ -1503,23 +1600,24 @@ function renderCrystal(input: {
   instructionFiles: string[];
   outputRelativePath: string;
 }) {
-  const currentFocus =
+  const currentFocus = escapeEmbeddedHeadings(
     input.body ||
     (input.checkpointTrail.length > 0
       ? "No explicit session body was supplied. Use the checkpoint trail below as provenance anchors; inspect source checkpoints for details before acting."
-      : "No explicit current focus body was supplied. Treat this artifact as a structural checkpoint until a richer handoff is written.");
+      : "No explicit current focus body was supplied. Treat this artifact as a structural checkpoint until a richer handoff is written."),
+  );
   const noun = input.kind === "checkpoint" ? "checkpoint" : "crystal";
   const sourceWindow = input.kind === "checkpoint" ? "manual mini-crystallization checkpoint" : "manual CLI snapshot";
-  return `# ${input.title}
+  return `# ${singleLine(input.title)}
 
 ## Header
 
-- Scope: ${input.scope}
-- Project: ${input.project}
+- Scope: ${singleLine(input.scope)}
+- Project: ${singleLine(input.project)}
 - Source window: ${sourceWindow}
-- Budget: ${input.budget}
-- Surface: ${input.surface}
-- Repo: ${input.repo}
+- Budget: ${singleLine(input.budget)}
+- Surface: ${singleLine(input.surface)}
+- Repo: ${singleLine(input.repo)}
 - Observed at: ${input.observedAt.toISOString()}
 
 ## Current Focus
@@ -1673,9 +1771,9 @@ function renderContinuityTailEntry(entry: ContinuityTailEntry) {
   ]
     .filter(Boolean)
     .join(" ");
-  return `- ${meta}
+  return `- ${singleLine(meta)}
 
-  ${indentContinuation(entry.content)}`;
+  ${indentContinuation(escapeEmbeddedHeadings(entry.content))}`;
 }
 
 async function readStdinBody() {
@@ -1854,18 +1952,20 @@ function takeRepeatedFlag(values: string[], flag: string): string[] {
 
 function renderBullets(items: string[], fallback: string) {
   if (items.length === 0) return `- ${fallback}`;
-  return items.map((item) => `- ${item}`).join("\n");
+  return items.map((item) => `- ${escapeEmbeddedHeadings(item)}`).join("\n");
 }
 
 function renderRelations(items: RelationHint[]) {
   if (items.length === 0) {
     return "- No explicit relation hints captured.";
   }
-  return items.map((item) => `- ${item.type}: ${item.target}`).join("\n");
+  return items
+    .map((item) => `- ${escapeEmbeddedHeadings(item.type)}: ${escapeEmbeddedHeadings(item.target)}`)
+    .join("\n");
 }
 
 function renderSessionProvenance(provenance: ProvenanceFields, surface: string) {
-  const rows: string[] = [`- Surface: ${surface}`];
+  const rows: string[] = [`- Surface: ${singleLine(surface)}`];
   const fields: Array<[string, string | undefined]> = [
     ["Agent body", provenance.agentBody],
     ["Harness", provenance.harness],
@@ -1880,13 +1980,13 @@ function renderSessionProvenance(provenance: ProvenanceFields, surface: string) 
   ];
 
   for (const [label, value] of fields) {
-    if (value) rows.push(`- ${label}: ${value}`);
+    if (value) rows.push(`- ${label}: ${singleLine(value)}`);
   }
   for (const sourceRef of provenance.sourceRefs) {
-    rows.push(`- Source ref: ${sourceRef}`);
+    rows.push(`- Source ref: ${singleLine(sourceRef)}`);
   }
   for (const pair of provenance.custom) {
-    rows.push(`- ${pair.key}: ${pair.value}`);
+    rows.push(`- ${singleLine(pair.key)}: ${singleLine(pair.value)}`);
   }
   if (rows.length === 1) {
     rows.push("- No explicit session provenance supplied. Add safe source/session pointers when available; never dump broad environment variables.");
@@ -1896,7 +1996,15 @@ function renderSessionProvenance(provenance: ProvenanceFields, surface: string) 
 
 function renderNumbered(items: string[], fallback: string[]) {
   const values = items.length > 0 ? items : fallback;
-  return values.map((item, index) => `${index + 1}. ${item}`).join("\n");
+  return values.map((item, index) => `${index + 1}. ${escapeEmbeddedHeadings(item)}`).join("\n");
+}
+
+function singleLine(value: string) {
+  return value.replace(/\s*\r?\n\s*/g, " ").trim();
+}
+
+function escapeEmbeddedHeadings(value: string) {
+  return value.replace(/^( {0,3})(#{1,2})(?=\s)/gm, "$1\\$2");
 }
 
 function slugify(value: string) {
@@ -1942,7 +2050,7 @@ Setup options:
 
 Init options:
   --repo <path>             Repo to activate; default cwd
-  --project <slug>          Project/product slug; default repo basename
+  --project <slug>          Project/product slug; default saved repo project or repo basename
   --dry-run                 Show planned init actions without writing
   --no-checkpoint           Do not create an activation checkpoint
   --no-agents-md            Do not create/update repo AGENTS.md pointer
@@ -1960,7 +2068,7 @@ Crystal/checkpoint options:
   --out-dir <path>           Output dir relative to repo; default .agent-crystals/sessions or .agent-crystals/checkpoints
   --title <title>            Crystal title
   --scope <scope>            repo|project|product|cross-project|user|system; default project
-  --project <slug>           Project/product slug; default repo basename
+  --project <slug>           Project/product slug; default saved repo project or repo basename
   --budget <mode>            fast|standard|deep; default standard for now, fast for checkpoint
   --surface <surface>        codex|claude-code|cli|hook; default cli
   --body <text>              Current focus body

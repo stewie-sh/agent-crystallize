@@ -74,7 +74,13 @@ agent-crystallize doctor
 
 `init` creates `.agent-crystals/`, writes a repo `AGENTS.md` pointer if needed,
 adds local/private patterns to `.git/info/exclude`, creates an activation
-checkpoint, and writes `.agent-crystals/manifest.json`.
+checkpoint, and writes `.agent-crystals/manifest.json`. It also records the
+resolved project name in `.agent-crystals/config.json`, so later checkpoint,
+crystal, and hook commands keep the same identity when `--project` is omitted.
+
+Repos initialized before this config existed can opt into stable project
+identity by rerunning `agent-crystallize init --project <slug>`. Existing
+artifacts are preserved; init only establishes the default for future writes.
 
 Generated crystals are local work artifacts by default. Commit them only when
 they are intentionally reviewed and sanitized.

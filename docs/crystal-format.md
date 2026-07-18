@@ -7,11 +7,17 @@ commit, diff, and import into other systems later.
 
 ```text
 .agent-crystals/
+  config.json
   checkpoints/
     <timestamp>-<slug>.md
   sessions/
     <timestamp>-<slug>.md
 ```
+
+`config.json` stores the repo's stable default project name. `init --project
+<slug>` creates or updates it; later CLI and hook writes use that value when no
+explicit `--project` is supplied. If the config exists but cannot be parsed,
+the CLI fails rather than silently drifting back to the directory basename.
 
 In public repositories, treat this default layout as a local working area unless
 the artifacts have been intentionally sanitized. This repo keeps generated
@@ -217,8 +223,16 @@ Errors include:
 
 - missing title;
 - missing required sections;
+- duplicate recognized sections;
+- recognized sections outside canonical order;
 - missing key header fields;
 - empty or TODO-only Current Focus.
+
+The CLI escapes H1/H2-looking lines inside free-form payloads so session prose
+cannot accidentally become crystal structure. Validators still reject duplicate
+or out-of-order recognized headings in manually edited or externally generated
+files. Consumers should validate before importing any crystal as structured
+data; parseable narration is still untrusted evidence.
 
 Warnings include:
 

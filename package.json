@@ -29,7 +29,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "npm run build",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "check": "npm test",
     "dev": "tsx src/index.ts",
     "prepack": "npm run build"
   },

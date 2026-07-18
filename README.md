@@ -139,6 +139,11 @@ keeps them ignored so private dogfood traces do not become public accidentally.
 Public dogfood material should be represented as sanitized Markdown under
 `examples/`.
 
+`agent-crystallize init --project <slug>` also saves that project identity in
+local `.agent-crystals/config.json`. Later checkpoints, crystals, and hooks reuse
+it when `--project` is omitted, avoiding accidental identity changes when a repo
+directory has a different name.
+
 ## Skill Support
 
 `agent-crystallize` includes a public `agent-context-crystallizer` skill using
@@ -250,7 +255,7 @@ Init options:
 
 ```text
 --repo <path>             Repo to activate; default cwd
---project <slug>          Project/product slug; default repo basename
+--project <slug>          Project/product slug; default saved repo project or repo basename
 --dry-run                 Show planned init actions without writing
 --no-checkpoint           Do not create an activation checkpoint
 --no-agents-md            Do not create/update repo AGENTS.md pointer
@@ -274,7 +279,7 @@ Crystal/checkpoint options:
 --out-dir <path>           Output dir relative to repo
 --title <title>            Artifact title
 --scope <scope>            repo|project|product|cross-project|user|system
---project <slug>           Project/product slug; default repo basename
+--project <slug>           Project/product slug; default saved repo project or repo basename
 --budget <mode>            fast|standard|deep
 --surface <name>           codex|claude-code|cursor|cli|hook
 --body <text>              Current focus body
