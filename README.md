@@ -349,10 +349,13 @@ Hook options:
 Hook compaction behavior:
 
 - `PreCompact` writes a local checkpoint before lossy compaction.
-- `PostCompact` prints a compact-resume bootstrap even when it skips a duplicate
-  checkpoint because a recent `PreCompact` checkpoint already exists.
-- `UserPromptSubmit` prints one post-compact fallback bootstrap if the harness
-  did not surface the compact-resume context before the next prompt.
+- `PostCompact` records compact state and skips duplicate checkpoints when a
+  recent `PreCompact` checkpoint exists. Codex can receive bootstrap output at
+  this event; Claude Code keeps this event side-effect-only because its current
+  schema does not accept `PostCompact` `additionalContext`.
+- Claude Code receives compact-resume context through
+  `SessionStart(source="compact")`. `UserPromptSubmit` emits one fallback only
+  when that supported lifecycle injection did not arrive.
 
 Hook activation is harness-specific. For Codex, open `/hooks` after installing
 or changing hook definitions, then review and trust the changed hooks. Codex may

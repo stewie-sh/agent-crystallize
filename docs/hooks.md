@@ -41,9 +41,13 @@ checkpoint creation fails.
 ### PostCompact
 
 Write a compact-summary checkpoint only when a recent `PreCompact` checkpoint
-was not already recorded. It also prints a compact-resume bootstrap with the
-latest local artifact pointers, so the next agent turn has a chance to see the
-same orientation even if `SessionStart` is delayed by the harness.
+was not already recorded. Codex receives a compact-resume bootstrap directly.
+Claude Code treats `PostCompact` as a side-effect-only event: its documented
+`hookSpecificOutput` schema has no `PostCompact` `additionalContext` branch, so
+the command exits cleanly without emitting unsupported structured output.
+Claude receives the bootstrap from the following
+`SessionStart(source="compact")`, with `UserPromptSubmit` as a one-time fallback
+if that lifecycle injection is delayed or absent.
 
 ### UserPromptSubmit
 
@@ -92,6 +96,13 @@ Claude Code command hooks receive event JSON on stdin. `SessionStart` uses
 Claude's `hookSpecificOutput.additionalContext` shape so the bootstrap is
 available to the agent without printing noisy terminal output.
 
+Do not return `hookSpecificOutput.additionalContext` with
+`hookEventName: "PostCompact"`. Claude Code rejects that shape. Keep
+`PostCompact` for checkpoint/state side effects and rely on
+`SessionStart(source="compact")` or the first `UserPromptSubmit` fallback for
+model-visible continuity context. See the current
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks).
+
 Use `/hooks` in Claude Code to confirm the hooks are visible under the expected
 events. For failures, check the transcript hook summaries and enable a debug log
 with Claude Code's debug controls. As with Codex, avoid assuming your
@@ -124,7 +135,10 @@ The hook runner keeps a small state file to avoid obvious duplication:
 - `SessionStart` routes through the local manifest logic, so artifacts marked
   as superseded by newer crystals are not shown as primary resume pointers.
 - `PostCompact` skips writing a duplicate checkpoint when `PreCompact` already
-  wrote one recently, but still prints a compact-resume bootstrap.
+  wrote one recently. Codex can receive its bootstrap directly; Claude Code
+  receives it through the supported compact `SessionStart` path.
+- A successful compact `SessionStart` marks the bootstrap delivered, preventing
+  a duplicate prompt-level fallback.
 - `UserPromptSubmit` prints the post-compact fallback at most once per
   `PostCompact`.
 - `Stop` writes only when there is uncheckpointed activity and the cadence
@@ -133,10 +147,11 @@ The hook runner keeps a small state file to avoid obvious duplication:
 ## Harness Caveat
 
 Hook output injection is host-specific. `agent-crystallize hook` emits bootstrap
-context on `SessionStart`, `PostCompact`, and the first `UserPromptSubmit` after
-compaction, but each harness decides how command stdout or `additionalContext`
-is surfaced to the model. Verify the lifecycle in your harness before relying
-on hooks as the only compaction safety net.
+context only through event/output shapes supported by the active harness. For
+Claude Code, `PostCompact` performs side effects but does not inject context;
+`SessionStart(source="compact")` and the first `UserPromptSubmit` fallback are
+the model-visible paths. Verify the lifecycle in your harness before relying on
+hooks as the only compaction safety net.
 
 Troubleshoot in this order:
 

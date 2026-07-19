@@ -27,6 +27,13 @@ function checkpointFiles(repo) {
     .map((name) => join(dir, name));
 }
 
+function runHook(repo, stateDir, event, input = {}) {
+  return run(
+    ["hook", "--repo", repo, "--harness", "claude-code", "--event", event, "--state-dir", stateDir, "--strict-precompact"],
+    { input: JSON.stringify({ cwd: repo, hook_event_name: event, session_id: "fixture-session", ...input }) },
+  );
+}
+
 test("free-form bodies cannot inject schema headings and validation rejects duplicate recognized sections", () => {
   const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-heading-"));
   json(run(["init", "--repo", repo, "--project", "stable-project", "--no-checkpoint", "--no-agents-md"]));
@@ -121,4 +128,32 @@ test("the published sanitized crystal remains strict-validation clean", () => {
   const result = json(run(["validate", "--repo", process.cwd(), "--files", "examples/sanitized-session-crystal.md", "--fail-on-warnings"]));
   assert.equal(result.errorCount, 0);
   assert.equal(result.warningCount, 0);
+});
+
+test("Claude PostCompact is side-effect-only and reinjects once through supported events", () => {
+  const fallbackRepo = mkdtempSync(join(tmpdir(), "agent-crystallize-claude-fallback-"));
+  const fallbackState = mkdtempSync(join(tmpdir(), "agent-crystallize-claude-fallback-state-"));
+  json(run(["init", "--repo", fallbackRepo, "--project", "claude-fallback", "--no-checkpoint", "--no-agents-md"]));
+
+  assert.equal(runHook(fallbackRepo, fallbackState, "PreCompact", { trigger: "manual" }).status, 0);
+  const postCompact = runHook(fallbackRepo, fallbackState, "PostCompact", { trigger: "manual" });
+  assert.equal(postCompact.status, 0, postCompact.stderr || postCompact.stdout);
+  assert.equal(postCompact.stdout, "");
+
+  const firstPrompt = runHook(fallbackRepo, fallbackState, "UserPromptSubmit", { prompt: "continue" });
+  const firstPromptOutput = json(firstPrompt);
+  assert.equal(firstPromptOutput.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+  assert.match(firstPromptOutput.hookSpecificOutput.additionalContext, /post-compact bootstrap fallback/i);
+  assert.equal(runHook(fallbackRepo, fallbackState, "UserPromptSubmit", { prompt: "continue again" }).stdout, "");
+
+  const sessionRepo = mkdtempSync(join(tmpdir(), "agent-crystallize-claude-session-"));
+  const sessionState = mkdtempSync(join(tmpdir(), "agent-crystallize-claude-session-state-"));
+  json(run(["init", "--repo", sessionRepo, "--project", "claude-session", "--no-checkpoint", "--no-agents-md"]));
+  assert.equal(runHook(sessionRepo, sessionState, "PreCompact", { trigger: "auto" }).status, 0);
+  assert.equal(runHook(sessionRepo, sessionState, "PostCompact", { trigger: "auto" }).stdout, "");
+
+  const sessionStart = json(runHook(sessionRepo, sessionState, "SessionStart", { source: "compact" }));
+  assert.equal(sessionStart.hookSpecificOutput.hookEventName, "SessionStart");
+  assert.match(sessionStart.hookSpecificOutput.additionalContext, /agent-crystallize bootstrap/i);
+  assert.equal(runHook(sessionRepo, sessionState, "UserPromptSubmit", { prompt: "continue after compact" }).stdout, "");
 });

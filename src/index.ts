@@ -450,10 +450,15 @@ async function hook(rest: string[]) {
     case "SessionStart": {
       const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs);
       const fullContextHash = stableKey(context.fullContext);
-      projectState.lastSessionStartAt = new Date().toISOString();
+      const injectedAt = new Date().toISOString();
+      projectState.lastSessionStartAt = injectedAt;
       projectState.lastInjectedContextHash = fullContextHash;
-      projectState.lastInjectedContextAt = new Date().toISOString();
+      projectState.lastInjectedContextAt = injectedAt;
       projectState.lastInjectedContextEvent = event;
+      const lastPostCompact = projectState.lastPostCompactAt ? Date.parse(projectState.lastPostCompactAt) : 0;
+      if (lastPostCompact > 0 && Date.parse(injectedAt) >= lastPostCompact) {
+        projectState.lastPostCompactPromptBootstrapAt = injectedAt;
+      }
       save();
       outputHookContext(harness, event, context.output);
       return undefined;
@@ -541,9 +546,11 @@ async function hook(rest: string[]) {
         projectState.lastActivityAt = now;
         projectState.lastActivityEvent = event;
         projectState.lastPostCompactAt = now;
-        projectState.lastInjectedContextHash = stableKey(context);
-        projectState.lastInjectedContextAt = now;
-        projectState.lastInjectedContextEvent = event;
+        if (canInjectHookContext(harness, event)) {
+          projectState.lastInjectedContextHash = stableKey(context);
+          projectState.lastInjectedContextAt = now;
+          projectState.lastInjectedContextEvent = event;
+        }
         save();
         outputHookContext(
           harness,
@@ -580,9 +587,11 @@ async function hook(rest: string[]) {
       projectState.lastCheckpointEvent = event;
       projectState.lastPostCompactAt = projectState.lastCheckpointAt;
       const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
-      projectState.lastInjectedContextHash = stableKey(context);
-      projectState.lastInjectedContextAt = projectState.lastCheckpointAt;
-      projectState.lastInjectedContextEvent = event;
+      if (canInjectHookContext(harness, event)) {
+        projectState.lastInjectedContextHash = stableKey(context);
+        projectState.lastInjectedContextAt = projectState.lastCheckpointAt;
+        projectState.lastInjectedContextEvent = event;
+      }
       save();
       outputHookContext(
         harness,
@@ -817,7 +826,12 @@ function renderSessionStartContext(
   return { output, fullContext };
 }
 
+function canInjectHookContext(harness: string, event: HookEvent) {
+  return harness !== "claude-code" || event === "SessionStart" || event === "UserPromptSubmit";
+}
+
 function outputHookContext(harness: string, event: HookEvent, context: string) {
+  if (!canInjectHookContext(harness, event)) return false;
   if (harness === "claude-code") {
     process.stdout.write(
       `${JSON.stringify({
@@ -828,9 +842,10 @@ function outputHookContext(harness: string, event: HookEvent, context: string) {
         suppressOutput: true,
       })}\n`,
     );
-    return;
+    return true;
   }
   process.stdout.write(`${context}\n`);
+  return true;
 }
 
 function stableKey(value: string) {
