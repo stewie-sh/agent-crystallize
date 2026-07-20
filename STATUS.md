@@ -26,7 +26,7 @@ Crystallization:
   Claude Code and manual portability for other Agent Skills-compatible
   harnesses.
 
-The next patch release is prepared as `@stewie-sh/agent-crystallize@0.1.12`.
+The next patch release is prepared as `@stewie-sh/agent-crystallize@0.1.13`.
 
 ## What Is Stable Enough To Review
 
