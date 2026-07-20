@@ -38,6 +38,14 @@ function checkpointFiles(repo) {
     .map((name) => join(dir, name));
 }
 
+test("subcommand help is read-only", () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-help-"));
+  const result = run(["checkpoint", "--repo", repo, "--help"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /agent-crystallize checkpoint/);
+  assert.equal(existsSync(join(repo, ".agent-crystals")), false);
+});
+
 function runHook(repo, stateDir, event, input = {}) {
   return run(
     ["hook", "--repo", repo, "--harness", "claude-code", "--event", event, "--state-dir", stateDir, "--strict-precompact"],

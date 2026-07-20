@@ -52,6 +52,10 @@ try {
 }
 
 async function run(name: string | undefined, rest: string[]) {
+  if (rest.includes("--help") || rest.includes("-h")) {
+    usage();
+    return undefined;
+  }
   switch (name) {
     case "now":
       return crystallize(rest, "crystal");
