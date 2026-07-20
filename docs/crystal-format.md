@@ -14,10 +14,18 @@ commit, diff, and import into other systems later.
     <timestamp>-<slug>.md
 ```
 
-`config.json` stores the repo's stable default project name. `init --project
-<slug>` creates or updates it; later CLI and hook writes use that value when no
-explicit `--project` is supplied. If the config exists but cannot be parsed,
-the CLI fails rather than silently drifting back to the directory basename.
+`config.json` stores the repo's stable default project name and artifact profile.
+`init --project <slug> --artifact-profile <name>` creates or updates it; later
+CLI and hook writes use the project value when no explicit `--project` is
+supplied. Existing version-1 configs without `artifactProfile` retain the prior
+`local-private` behavior. If the config exists but cannot be parsed, the CLI
+fails rather than silently drifting back to the directory basename.
+
+Artifact profiles control Git visibility, not cognitive authority:
+
+- `local-private` excludes all of `.agent-crystals/`;
+- `reviewed-shared` excludes `checkpoints/`, `manifest.json`, and `config.json`,
+  while allowing reviewed `sessions/` artifacts to be committed deliberately.
 
 In public repositories, treat this default layout as a local working area unless
 the artifacts have been intentionally sanitized. This repo keeps generated

@@ -78,9 +78,25 @@ checkpoint, and writes `.agent-crystals/manifest.json`. It also records the
 resolved project name in `.agent-crystals/config.json`, so later checkpoint,
 crystal, and hook commands keep the same identity when `--project` is omitted.
 
-Repos initialized before this config existed can opt into stable project
-identity by rerunning `agent-crystallize init --project <slug>`. Existing
-artifacts are preserved; init only establishes the default for future writes.
+The default `local-private` artifact profile excludes the entire
+`.agent-crystals/` directory from Git. In a private/team repository where clean
+session crystals should be reviewed and committed while mechanical checkpoints
+stay local, initialize with:
+
+```bash
+agent-crystallize init \
+  --project my-product \
+  --artifact-profile reviewed-shared
+```
+
+`reviewed-shared` excludes `checkpoints/`, `manifest.json`, and `config.json`
+through the local Git exclude file. Files under `sessions/` remain commit-able;
+the CLI never stages or commits them automatically.
+
+Repos initialized before this config/profile existed can rerun
+`agent-crystallize init --project <slug> --artifact-profile <name>`. Existing
+artifacts are preserved; init only establishes future defaults and managed local
+exclude rules.
 
 Generated crystals are local work artifacts by default. Commit them only when
 they are intentionally reviewed and sanitized.

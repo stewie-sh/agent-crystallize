@@ -36,8 +36,10 @@ const requiredSections = canonicalSections.filter(
 const hookEvents = ["SessionStart", "UserPromptSubmit", "PostToolUse", "PostToolBatch", "PreCompact", "PostCompact", "Stop"] as const;
 const managedStart = "<!-- agent-crystallize:context-persistence:start -->";
 const managedEnd = "<!-- agent-crystallize:context-persistence:end -->";
-const localExcludeStart = "# agent-crystallize:local-private:start";
-const localExcludeEnd = "# agent-crystallize:local-private:end";
+const artifactProfileExcludeStart = "# agent-crystallize:artifact-profile:start";
+const artifactProfileExcludeEnd = "# agent-crystallize:artifact-profile:end";
+const legacyLocalExcludeStart = "# agent-crystallize:local-private:start";
+const legacyLocalExcludeEnd = "# agent-crystallize:local-private:end";
 
 try {
   const result = await run(command, args);
@@ -79,6 +81,7 @@ async function run(name: string | undefined, rest: string[]) {
 }
 
 type ArtifactKind = "crystal" | "checkpoint";
+type ArtifactProfile = "local-private" | "reviewed-shared";
 
 type HookEvent = (typeof hookEvents)[number];
 
@@ -129,6 +132,7 @@ interface FileAction {
 interface RepoConfig {
   version: 1;
   project: string;
+  artifactProfile: ArtifactProfile;
 }
 
 function setup(rest: string[]) {
@@ -201,6 +205,7 @@ function setup(rest: string[]) {
 async function init(rest: string[]) {
   const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
   const project = resolveProject(repo, takeFlag(rest, "--project"));
+  const artifactProfile = resolveArtifactProfile(repo, takeFlag(rest, "--artifact-profile"));
   const dryRun = takeBooleanFlag(rest, "--dry-run");
   const noCheckpoint = takeBooleanFlag(rest, "--no-checkpoint");
   const noAgentsMd = takeBooleanFlag(rest, "--no-agents-md");
@@ -213,8 +218,8 @@ async function init(rest: string[]) {
   actions.push(ensureDirectory(resolve(repo, ".agent-crystals"), dryRun));
   actions.push(ensureDirectory(resolve(repo, ".agent-crystals", "checkpoints"), dryRun));
   actions.push(ensureDirectory(resolve(repo, ".agent-crystals", "sessions"), dryRun));
-  actions.push(upsertRepoConfig(repo, project, dryRun));
-  actions.push(upsertLocalExclude(repo, dryRun));
+  actions.push(upsertRepoConfig(repo, project, artifactProfile, dryRun));
+  actions.push(upsertLocalExclude(repo, artifactProfile, dryRun));
   if (!noAgentsMd) {
     actions.push(
       upsertManagedBlock(resolve(repo, "AGENTS.md"), renderRepoPointer(project), {
@@ -278,6 +283,7 @@ async function init(rest: string[]) {
     dryRun,
     repo,
     project,
+    artifactProfile,
     actions,
     checkpoint,
     manifest: manifestResult,
@@ -295,6 +301,7 @@ function doctor(rest: string[]) {
   const hooks = takeBooleanFlag(rest, "--hooks");
   if (rest.length > 0) throw new Error(`Unexpected doctor arguments: ${rest.join(" ")}`);
   if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
+  const repoConfig = readRepoConfig(repo);
 
   const checks = [
     checkPath("repo", repo, true),
@@ -304,7 +311,7 @@ function doctor(rest: string[]) {
     checkRepoConfig(repo),
     checkPath("repo:.agent-crystals/manifest.json", resolve(repo, ".agent-crystals", "manifest.json"), false),
     checkPath("repo:AGENTS.md", resolve(repo, "AGENTS.md"), false),
-    checkLocalExclude(repo),
+    checkLocalExclude(repo, repoConfig?.artifactProfile ?? "local-private"),
     checkPath("global:protocol", resolve(homedir(), ".agents", "context-persistence-protocol.md"), false),
   ];
   if (codex) checks.push(checkManagedPointer("global:codex", resolve(homedir(), ".codex", "AGENTS.md")));
@@ -972,11 +979,21 @@ function resolveProject(repo: string, explicitProject?: string) {
   return config?.project ?? (basename(repo) || "project");
 }
 
+function resolveArtifactProfile(repo: string, explicitProfile?: string): ArtifactProfile {
+  if (explicitProfile !== undefined) return normalizeArtifactProfile(explicitProfile);
+  return readRepoConfig(repo)?.artifactProfile ?? "local-private";
+}
+
 function normalizeProject(project: string) {
   const normalized = project.trim();
   if (!normalized) throw new Error("Project name must not be empty.");
   if (/\r|\n/.test(normalized)) throw new Error("Project name must fit on one line.");
   return normalized;
+}
+
+function normalizeArtifactProfile(profile: string): ArtifactProfile {
+  if (profile === "local-private" || profile === "reviewed-shared") return profile;
+  throw new Error("Artifact profile must be local-private or reviewed-shared.");
 }
 
 function readRepoConfig(repo: string): RepoConfig | undefined {
@@ -985,16 +1002,20 @@ function readRepoConfig(repo: string): RepoConfig | undefined {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoConfig>;
     if (parsed.version !== 1 || typeof parsed.project !== "string") return undefined;
-    return { version: 1, project: normalizeProject(parsed.project) };
+    return {
+      version: 1,
+      project: normalizeProject(parsed.project),
+      artifactProfile: normalizeArtifactProfile(parsed.artifactProfile ?? "local-private"),
+    };
   } catch {
     return undefined;
   }
 }
 
-function upsertRepoConfig(repo: string, project: string, dryRun: boolean): FileAction {
+function upsertRepoConfig(repo: string, project: string, artifactProfile: ArtifactProfile, dryRun: boolean): FileAction {
   const path = resolve(repo, ".agent-crystals", "config.json");
   const existed = existsSync(path);
-  const content = `${JSON.stringify({ version: 1, project } satisfies RepoConfig, null, 2)}\n`;
+  const content = `${JSON.stringify({ version: 1, project, artifactProfile } satisfies RepoConfig, null, 2)}\n`;
   const current = existed ? readFileSync(path, "utf8") : "";
   if (current === content) return { path, action: "unchanged" };
   if (dryRun) return { path, action: existed ? "would_update" : "would_create" };
@@ -1003,7 +1024,41 @@ function upsertRepoConfig(repo: string, project: string, dryRun: boolean): FileA
   return { path, action: existed ? "updated" : "created" };
 }
 
-function upsertLocalExclude(repo: string, dryRun: boolean): FileAction {
+function renderArtifactProfileExclude(artifactProfile: ArtifactProfile) {
+  const artifactPatterns =
+    artifactProfile === "local-private"
+      ? [".agent-crystals/"]
+      : [".agent-crystals/checkpoints/", ".agent-crystals/manifest.json", ".agent-crystals/config.json"];
+  return `${artifactProfileExcludeStart}
+# profile: ${artifactProfile}
+${artifactPatterns.join("\n")}
+.local/
+.private/
+private/
+docs/private/
+docs/internal/
+*.private.md
+*.internal.md
+${artifactProfileExcludeEnd}
+`;
+}
+
+function replaceArtifactProfileExclude(current: string, block: string) {
+  const markers = [
+    [artifactProfileExcludeStart, artifactProfileExcludeEnd],
+    [legacyLocalExcludeStart, legacyLocalExcludeEnd],
+  ];
+  let next = current;
+  let replaced = false;
+  for (const [start, end] of markers) {
+    if (!next.includes(start) || !next.includes(end)) continue;
+    next = next.replace(new RegExp(`${escapeRegex(start)}[\\s\\S]*?${escapeRegex(end)}\\n?`), replaced ? "" : block);
+    replaced = true;
+  }
+  return replaced ? next : `${current.replace(/\s*$/u, "\n")}\n${block}`;
+}
+
+function upsertLocalExclude(repo: string, artifactProfile: ArtifactProfile, dryRun: boolean): FileAction {
   const path = resolveGitExcludePath(repo);
   if (!path) {
     return {
@@ -1013,21 +1068,9 @@ function upsertLocalExclude(repo: string, dryRun: boolean): FileAction {
     };
   }
   const existed = existsSync(path);
-  const block = `${localExcludeStart}
-.agent-crystals/
-.local/
-.private/
-private/
-docs/private/
-docs/internal/
-*.private.md
-*.internal.md
-${localExcludeEnd}
-`;
+  const block = renderArtifactProfileExclude(artifactProfile);
   const current = existsSync(path) ? readFileSync(path, "utf8") : "";
-  const next = current.includes(localExcludeStart) && current.includes(localExcludeEnd)
-    ? current.replace(new RegExp(`${escapeRegex(localExcludeStart)}[\\s\\S]*?${escapeRegex(localExcludeEnd)}\\n?`), block)
-    : `${current.replace(/\s*$/u, "\n")}\n${block}`;
+  const next = replaceArtifactProfileExclude(current, block);
   if (current === next) return { path, action: "unchanged" };
   if (dryRun) return { path, action: existed ? "would_update" : "would_create" };
   mkdirSync(dirname(path), { recursive: true });
@@ -1055,18 +1098,34 @@ function checkRepoConfig(repo: string) {
     path,
     required: true,
     status: config ? "ok" : "invalid",
-    detail: config ? `project=${config.project}` : "expected { version: 1, project: <non-empty one-line string> }",
+    detail: config
+      ? `project=${config.project}; artifactProfile=${config.artifactProfile}`
+      : "expected { version: 1, project: <non-empty one-line string>, artifactProfile?: local-private|reviewed-shared }",
   };
 }
 
-function checkLocalExclude(repo: string) {
+function findArtifactProfileExclude(body: string) {
+  for (const [start, end] of [
+    [artifactProfileExcludeStart, artifactProfileExcludeEnd],
+    [legacyLocalExcludeStart, legacyLocalExcludeEnd],
+  ]) {
+    const match = body.match(new RegExp(`${escapeRegex(start)}[\\s\\S]*?${escapeRegex(end)}\\n?`));
+    if (match) return match[0];
+  }
+  return undefined;
+}
+
+function checkLocalExclude(repo: string, artifactProfile: ArtifactProfile) {
   const path = resolveGitExcludePath(repo) ?? resolve(repo, ".git", "info", "exclude");
   const body = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const managedBlock = findArtifactProfileExclude(body);
+  const expectedBlock = renderArtifactProfileExclude(artifactProfile);
   return {
     name: "repo:git-info-exclude",
     path,
     required: false,
-    status: body.includes(localExcludeStart) && body.includes(".agent-crystals/") ? "ok" : "missing_optional",
+    status: managedBlock === expectedBlock ? "ok" : managedBlock ? "profile_mismatch" : "missing_optional",
+    detail: `artifactProfile=${artifactProfile}`,
   };
 }
 
@@ -2070,6 +2129,7 @@ Setup options:
 Init options:
   --repo <path>             Repo to activate; default cwd
   --project <slug>          Project/product slug; default saved repo project or repo basename
+  --artifact-profile <name> local-private|reviewed-shared; default saved profile or local-private
   --dry-run                 Show planned init actions without writing
   --no-checkpoint           Do not create an activation checkpoint
   --no-agents-md            Do not create/update repo AGENTS.md pointer

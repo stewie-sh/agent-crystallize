@@ -134,15 +134,28 @@ Then validate what you plan to rely on:
 agent-crystallize validate
 ```
 
-Generated `.agent-crystals/` files are local work artifacts by default. This repo
-keeps them ignored so private dogfood traces do not become public accidentally.
-Public dogfood material should be represented as sanitized Markdown under
-`examples/`.
+Generated `.agent-crystals/` files use the `local-private` artifact profile by
+default. This keeps the whole directory out of Git so private dogfood traces do
+not become public accidentally. Public dogfood material should be represented as
+sanitized Markdown under `examples/`.
 
 `agent-crystallize init --project <slug>` also saves that project identity in
 local `.agent-crystals/config.json`. Later checkpoints, crystals, and hooks reuse
 it when `--project` is omitted, avoiding accidental identity changes when a repo
 directory has a different name.
+
+For a private/team repo where reviewed session crystals should become shared
+handoff artifacts without tracking mechanical checkpoint noise, opt into:
+
+```bash
+agent-crystallize init \
+  --project my-product \
+  --artifact-profile reviewed-shared
+```
+
+This profile keeps `checkpoints/`, `manifest.json`, and `config.json` local while
+allowing intentionally reviewed files under `sessions/` to be committed. It does
+not commit anything automatically.
 
 ## Skill Support
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 
 const cli = resolve("dist/index.js");
@@ -24,6 +24,11 @@ function git(repo, args) {
   const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result.stdout.trim();
+}
+
+function gitPath(repo, args) {
+  const path = git(repo, args);
+  return isAbsolute(path) ? path : resolve(repo, path);
 }
 
 function checkpointFiles(repo) {
@@ -98,7 +103,7 @@ test("init persists project identity for later CLI and hook artifacts", () => {
   json(run(["init", "--repo", repo, "--project", "product-alpha", "--no-agents-md"]));
 
   const config = JSON.parse(readFileSync(join(repo, ".agent-crystals", "config.json"), "utf8"));
-  assert.deepEqual(config, { version: 1, project: "product-alpha" });
+  assert.deepEqual(config, { version: 1, project: "product-alpha", artifactProfile: "local-private" });
 
   const checkpoint = json(
     run([
@@ -146,16 +151,111 @@ test("init and doctor resolve the shared exclude file from a linked Git worktree
   const initialized = json(
     run(["init", "--repo", linked, "--project", "linked-project", "--no-checkpoint", "--no-agents-md"]),
   );
-  const excludePath = git(linked, ["rev-parse", "--git-path", "info/exclude"]);
+  const excludePath = gitPath(linked, ["rev-parse", "--git-path", "info/exclude"]);
   const excludeAction = initialized.actions.find((action) => action.path === excludePath);
   assert.ok(excludeAction, `expected init action for ${excludePath}`);
-  assert.match(readFileSync(excludePath, "utf8"), /agent-crystallize:local-private:start/);
+  assert.match(readFileSync(excludePath, "utf8"), /agent-crystallize:artifact-profile:start/);
   assert.equal(existsSync(join(linked, ".git", "info", "exclude")), false);
 
   const doctor = json(run(["doctor", "--repo", linked]));
   const excludeCheck = doctor.checks.find((check) => check.name === "repo:git-info-exclude");
   assert.equal(excludeCheck?.path, excludePath);
   assert.equal(excludeCheck?.status, "ok");
+});
+
+test("reviewed-shared keeps mechanical artifacts local and session crystals commit-able", () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-reviewed-shared-"));
+  assert.equal(spawnSync("git", ["init", "-q", repo], { encoding: "utf8" }).status, 0);
+  const excludePath = gitPath(repo, ["rev-parse", "--git-path", "info/exclude"]);
+  writeFileSync(
+    excludePath,
+    `${readFileSync(excludePath, "utf8")}\n# agent-crystallize:local-private:start\n.agent-crystals/\n# agent-crystallize:local-private:end\n`,
+  );
+
+  const initialized = json(
+    run([
+      "init",
+      "--repo",
+      repo,
+      "--project",
+      "shared-product",
+      "--artifact-profile",
+      "reviewed-shared",
+      "--no-checkpoint",
+      "--no-agents-md",
+    ]),
+  );
+  assert.equal(initialized.artifactProfile, "reviewed-shared");
+  assert.deepEqual(JSON.parse(readFileSync(join(repo, ".agent-crystals", "config.json"), "utf8")), {
+    version: 1,
+    project: "shared-product",
+    artifactProfile: "reviewed-shared",
+  });
+
+  const exclude = readFileSync(excludePath, "utf8");
+  assert.match(exclude, /# profile: reviewed-shared/);
+  assert.doesNotMatch(exclude, /agent-crystallize:local-private:start/);
+  assert.match(exclude, /^\.agent-crystals\/checkpoints\/$/m);
+  assert.match(exclude, /^\.agent-crystals\/manifest\.json$/m);
+  assert.match(exclude, /^\.agent-crystals\/config\.json$/m);
+  assert.doesNotMatch(exclude, /^\.agent-crystals\/$/m);
+
+  const checkpoint = json(run(["checkpoint", "--repo", repo, "--body", "Mechanical checkpoint fixture."]));
+  const session = json(run(["now", "--repo", repo, "--body", "Reviewed session crystal fixture."]));
+  const checkIgnored = (path) => spawnSync("git", ["-C", repo, "check-ignore", "-q", path], { encoding: "utf8" }).status;
+  assert.equal(checkIgnored(checkpoint.path), 0);
+  assert.equal(checkIgnored(join(repo, ".agent-crystals", "manifest.json")), 0);
+  assert.equal(checkIgnored(join(repo, ".agent-crystals", "config.json")), 0);
+  assert.equal(checkIgnored(session.path), 1);
+
+  const doctor = json(run(["doctor", "--repo", repo]));
+  const excludeCheck = doctor.checks.find((check) => check.name === "repo:git-info-exclude");
+  assert.equal(excludeCheck?.status, "ok");
+  assert.equal(excludeCheck?.detail, "artifactProfile=reviewed-shared");
+
+  writeFileSync(
+    join(repo, ".agent-crystals", "config.json"),
+    `${JSON.stringify({ version: 1, project: "shared-product", artifactProfile: "local-private" }, null, 2)}\n`,
+  );
+  const mismatchedDoctor = json(run(["doctor", "--repo", repo]));
+  assert.equal(
+    mismatchedDoctor.checks.find((check) => check.name === "repo:git-info-exclude")?.status,
+    "profile_mismatch",
+  );
+
+  json(
+    run([
+      "init",
+      "--repo",
+      repo,
+      "--project",
+      "shared-product",
+      "--artifact-profile",
+      "local-private",
+      "--no-checkpoint",
+      "--no-agents-md",
+    ]),
+  );
+  const localPrivateExclude = readFileSync(excludePath, "utf8");
+  assert.match(localPrivateExclude, /# profile: local-private/);
+  assert.match(localPrivateExclude, /^\.agent-crystals\/$/m);
+  assert.equal(localPrivateExclude.match(/agent-crystallize:artifact-profile:start/g)?.length, 1);
+  assert.equal(checkIgnored(session.path), 0);
+});
+
+test("init rejects unknown artifact profiles", () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-invalid-profile-"));
+  const result = run([
+    "init",
+    "--repo",
+    repo,
+    "--artifact-profile",
+    "share-everything",
+    "--no-checkpoint",
+    "--no-agents-md",
+  ]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Artifact profile must be local-private or reviewed-shared/);
 });
 
 test("the published sanitized crystal remains strict-validation clean", () => {
