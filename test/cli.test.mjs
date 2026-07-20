@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -18,6 +18,12 @@ function run(args, options = {}) {
 function json(result) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return JSON.parse(result.stdout);
+}
+
+function git(repo, args) {
+  const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return result.stdout.trim();
 }
 
 function checkpointFiles(repo) {
@@ -122,6 +128,34 @@ test("init persists project identity for later CLI and hook artifacts", () => {
   const invalidConfig = run(["checkpoint", "--repo", repo, "--body", "Must not silently fall back to the directory name."]);
   assert.equal(invalidConfig.status, 1);
   assert.match(invalidConfig.stderr, /Invalid repo config/);
+});
+
+test("init and doctor resolve the shared exclude file from a linked Git worktree", () => {
+  const root = mkdtempSync(join(tmpdir(), "agent-crystallize-worktree-"));
+  const main = join(root, "main");
+  const linked = join(root, "linked");
+
+  assert.equal(spawnSync("git", ["init", "-q", main], { encoding: "utf8" }).status, 0);
+  git(main, ["config", "user.email", "fixture@example.com"]);
+  git(main, ["config", "user.name", "Fixture"]);
+  writeFileSync(join(main, "seed.txt"), "seed\n");
+  git(main, ["add", "seed.txt"]);
+  git(main, ["commit", "-qm", "seed"]);
+  git(main, ["worktree", "add", "-qb", "linked-fixture", linked]);
+
+  const initialized = json(
+    run(["init", "--repo", linked, "--project", "linked-project", "--no-checkpoint", "--no-agents-md"]),
+  );
+  const excludePath = git(linked, ["rev-parse", "--git-path", "info/exclude"]);
+  const excludeAction = initialized.actions.find((action) => action.path === excludePath);
+  assert.ok(excludeAction, `expected init action for ${excludePath}`);
+  assert.match(readFileSync(excludePath, "utf8"), /agent-crystallize:local-private:start/);
+  assert.equal(existsSync(join(linked, ".git", "info", "exclude")), false);
+
+  const doctor = json(run(["doctor", "--repo", linked]));
+  const excludeCheck = doctor.checks.find((check) => check.name === "repo:git-info-exclude");
+  assert.equal(excludeCheck?.path, excludePath);
+  assert.equal(excludeCheck?.status, "ok");
 });
 
 test("the published sanitized crystal remains strict-validation clean", () => {

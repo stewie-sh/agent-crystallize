@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, fstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
@@ -1004,15 +1004,14 @@ function upsertRepoConfig(repo: string, project: string, dryRun: boolean): FileA
 }
 
 function upsertLocalExclude(repo: string, dryRun: boolean): FileAction {
-  const gitRoot = collectGitContext(repo).root;
-  if (!gitRoot) {
+  const path = resolveGitExcludePath(repo);
+  if (!path) {
     return {
       path: resolve(repo, ".git", "info", "exclude"),
       action: "skipped",
       detail: "not a git repository; local private exclude not written",
     };
   }
-  const path = resolve(gitRoot, ".git", "info", "exclude");
   const existed = existsSync(path);
   const block = `${localExcludeStart}
 .agent-crystals/
@@ -1061,8 +1060,7 @@ function checkRepoConfig(repo: string) {
 }
 
 function checkLocalExclude(repo: string) {
-  const gitRoot = collectGitContext(repo).root;
-  const path = gitRoot ? resolve(gitRoot, ".git", "info", "exclude") : resolve(repo, ".git", "info", "exclude");
+  const path = resolveGitExcludePath(repo) ?? resolve(repo, ".git", "info", "exclude");
   const body = existsSync(path) ? readFileSync(path, "utf8") : "";
   return {
     name: "repo:git-info-exclude",
@@ -1070,6 +1068,12 @@ function checkLocalExclude(repo: string) {
     required: false,
     status: body.includes(localExcludeStart) && body.includes(".agent-crystals/") ? "ok" : "missing_optional",
   };
+}
+
+function resolveGitExcludePath(repo: string) {
+  const path = git(repo, ["rev-parse", "--git-path", "info/exclude"]);
+  if (!path) return undefined;
+  return isAbsolute(path) ? path : resolve(repo, path);
 }
 
 function checkManagedPointer(name: string, path: string) {
