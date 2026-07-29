@@ -9,6 +9,25 @@ Use the `agent-crystallize` CLI as the source of truth. This skill is a thin
 workflow wrapper; do not reimplement the artifact format by hand unless the CLI
 is unavailable.
 
+## Resolve The CLI Before Writing
+
+Do not assume the agent harness inherited the user's interactive-shell `PATH`.
+Resolve one working invocation in this order:
+
+1. Use a repo-provided `agent-crystallize` package script when present.
+2. Use `agent-crystallize` when `command -v agent-crystallize` succeeds.
+3. If `AGENT_CRYSTALLIZE_CLI` names a readable JavaScript entry point, invoke it
+   with the current Node runtime: `node "$AGENT_CRYSTALLIZE_CLI" ...`.
+4. Use a verified package-manager or harness-provided bundled runtime path.
+   Never guess a machine-specific path or copy one from another user.
+5. Only when no CLI is available, write a plainly labelled **non-validated
+   emergency handoff** outside the canonical `.agent-crystals/checkpoints/` and
+   `.agent-crystals/sessions/` directories. Replace it with a CLI-generated,
+   validated artifact when the runtime is restored.
+
+The emergency handoff preserves continuity; it is not a valid crystal and must
+not silently enter the manifest or normal validation set.
+
 ## Workflow
 
 1. Inspect the local state that matters: `AGENTS.md`/`CLAUDE.md` if present,
@@ -72,3 +91,5 @@ agent-crystallize doctor --codex --claude --hooks
   transcripts.
 - If hooks are configured but continuity feels broken, ask the user to verify
   the host `/hooks` view. Codex may skip new or changed hooks until trusted.
+- Never treat a hand-written emergency handoff as schema-valid merely because
+  it is readable Markdown.

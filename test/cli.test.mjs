@@ -11,6 +11,7 @@ function run(args, options = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
     cwd: options.cwd,
     input: options.input,
+    env: options.env,
     encoding: "utf8",
   });
 }
@@ -44,6 +45,18 @@ test("subcommand help is read-only", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /agent-crystallize checkpoint/);
   assert.equal(existsSync(join(repo, ".agent-crystals")), false);
+});
+
+test("setup installs CLI discovery and non-validated emergency guidance", () => {
+  const home = mkdtempSync(join(tmpdir(), "agent-crystallize-setup-home-"));
+  const result = json(run(["setup", "--codex", "--skills"], { env: { ...process.env, HOME: home } }));
+  const skillPath = join(home, ".codex", "skills", "agent-context-crystallizer", "SKILL.md");
+  const skill = readFileSync(skillPath, "utf8");
+
+  assert.match(skill, /Resolve The CLI Before Writing/);
+  assert.match(skill, /AGENT_CRYSTALLIZE_CLI/);
+  assert.match(skill, /non-validated\s+emergency handoff/);
+  assert.ok(result.nextActions.some((item) => item.includes("Verify the agent harness can resolve the CLI")));
 });
 
 function runHook(repo, stateDir, event, input = {}) {

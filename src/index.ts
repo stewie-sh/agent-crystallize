@@ -196,6 +196,7 @@ function setup(rest: string[]) {
       codex || claude
         ? [
             "Run agent-crystallize doctor.",
+            "Verify the agent harness can resolve the CLI (repo script, PATH, AGENT_CRYSTALLIZE_CLI, or a verified bundled runtime pointer).",
             "If hooks are configured or continuity feels broken, run agent-crystallize doctor --hooks and verify host /hooks.",
             "Run agent-crystallize init inside each repo that should keep local crystals.",
           ]

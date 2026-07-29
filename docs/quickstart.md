@@ -34,8 +34,11 @@ unless you pass `--force`.
 ## Skill Support Matrix
 
 The bundled skill uses the Agent Skills / `SKILL.md` folder format. It is a
-thin wrapper around the CLI, so the `agent-crystallize` binary must be available
-on the agent's `PATH`.
+thin wrapper around the CLI. Prefer the `agent-crystallize` binary on the
+agent's `PATH`, but do not assume a harness inherits the interactive-shell
+environment. The skill resolves a repo package script, `PATH`, an explicit
+`AGENT_CRYSTALLIZE_CLI` JavaScript entry point, or a verified bundled runtime in
+that order before falling back to a non-validated emergency handoff.
 
 | Harness | Status | Command |
 | --- | --- | --- |
@@ -52,6 +55,12 @@ cp -R skills/agent-context-crystallizer <target-skill-dir>/
 The folder format is portable; discovery paths, hook support, trust prompts,
 and allowed tools are harness-specific. Avoid claiming a harness is supported
 end-to-end until you have tested that harness's install and activation flow.
+
+If no CLI invocation can be resolved, keep the emergency handoff outside
+`.agent-crystals/checkpoints/` and `.agent-crystals/sessions/`. Clearly mark it
+non-validated, then replace it with CLI-generated output after restoring the
+runtime. Readable Markdown alone is not proof that a checkpoint satisfies the
+artifact schema.
 
 Hook automation is intentionally opt-in. `agent-crystallize setup --hooks`
 points you to the hook docs, but v0 does not mutate harness hook config

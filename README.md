@@ -172,11 +172,17 @@ Current support matrix:
 | Claude Code | first-class install path, setup smoke-tested | `agent-crystallize setup --claude --skills` |
 | Other Agent Skills-compatible harnesses | portable/manual install | copy `skills/agent-context-crystallizer` into the harness skill directory |
 
-For manual installs, make sure the `agent-crystallize` binary is available on
-the agent's `PATH`. The skill follows the open Agent Skills shape, but each
-harness chooses its own discovery directories, trust flow, tool permissions, and
-hook behavior. Treat untested harnesses as compatible-in-format, not guaranteed
-end-to-end support.
+For manual installs, prefer making the `agent-crystallize` binary available on
+the agent's `PATH`. Agent processes do not always inherit the interactive-shell
+`PATH`, so the bundled skill also supports a repo package script,
+`AGENT_CRYSTALLIZE_CLI` pointing to a readable JavaScript entry point, or a
+verified package-manager/harness runtime path. A manual emergency handoff is a
+last-resort, non-validated continuity artifact and must stay outside the
+canonical checkpoint/session directories until replaced by CLI output.
+
+The skill follows the open Agent Skills shape, but each harness chooses its own
+discovery directories, trust flow, tool permissions, and hook behavior. Treat
+untested harnesses as compatible-in-format, not guaranteed end-to-end support.
 
 ## Why Local First
 
