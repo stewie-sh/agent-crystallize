@@ -1,6 +1,6 @@
 {
   "name": "@stewie-sh/agent-crystallize",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Local-first context checkpoints and crystals for long-running AI coding agent sessions.",
   "type": "module",
   "repository": {
