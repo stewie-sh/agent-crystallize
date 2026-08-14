@@ -49,7 +49,9 @@ test("subcommand help is read-only", () => {
 
 test("setup installs CLI discovery and non-validated emergency guidance", () => {
   const home = mkdtempSync(join(tmpdir(), "agent-crystallize-setup-home-"));
-  const result = json(run(["setup", "--codex", "--skills"], { env: { ...process.env, HOME: home } }));
+  const result = json(run(["setup", "--codex", "--skills"], {
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+  }));
   const skillPath = join(home, ".codex", "skills", "agent-context-crystallizer", "SKILL.md");
   const skill = readFileSync(skillPath, "utf8");
 
@@ -283,6 +285,20 @@ test("the published sanitized crystal remains strict-validation clean", () => {
   const result = json(run(["validate", "--repo", process.cwd(), "--files", "examples/sanitized-session-crystal.md", "--fail-on-warnings"]));
   assert.equal(result.errorCount, 0);
   assert.equal(result.warningCount, 0);
+});
+
+test("manifest classifies Windows-style checkpoint and session paths", () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-windows-paths-"));
+  const cases = [
+    { command: "checkpoint", dir: ".agent-crystals\\checkpoints", kind: "checkpoint" },
+    { command: "now", dir: ".agent-crystals\\sessions", kind: "session" },
+  ];
+
+  for (const fixture of cases) {
+    json(run([fixture.command, "--repo", repo, "--out-dir", fixture.dir, "--body", `${fixture.kind} fixture.`]));
+    const manifest = json(run(["manifest", "--repo", repo, "--crystals-dir", fixture.dir]));
+    assert.equal(manifest.activeArtifacts[0]?.kind, fixture.kind);
+  }
 });
 
 test("Claude PostCompact is side-effect-only and reinjects once through supported events", () => {

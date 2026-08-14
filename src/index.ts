@@ -1413,6 +1413,7 @@ interface ValidationResult {
 function validateCrystalFile(repo: string, absolutePath: string): ValidationResult {
   const markdown = readFileSync(absolutePath, "utf8");
   const path = relative(repo, absolutePath);
+  const normalizedPath = path.replace(/\\/g, "/");
   const errors: string[] = [];
   const warnings: string[] = [];
   const title = extractTitle(markdown);
@@ -1448,7 +1449,11 @@ function validateCrystalFile(repo: string, absolutePath: string): ValidationResu
 
   return {
     path,
-    kind: path.includes("/checkpoints/") ? "checkpoint" : path.includes("/sessions/") ? "session" : "unknown",
+    kind: normalizedPath.includes("/checkpoints/")
+      ? "checkpoint"
+      : normalizedPath.includes("/sessions/")
+        ? "session"
+        : "unknown",
     errors,
     warnings,
   };
