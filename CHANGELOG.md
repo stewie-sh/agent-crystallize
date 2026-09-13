@@ -1,0 +1,34 @@
+# Changelog
+
+## Unreleased
+
+### Added
+
+- Bounded local `recall` with topic, file, session, date, and status filters.
+- `doctor` drift detection plus backup-preserving `setup --upgrade` for
+  generated protocol and skill copies.
+- Manifest visibility for invalid artifacts and valid/active counts.
+- Regression coverage for concurrent hooks, socket stdin, session isolation,
+  same-second captures, invalid superseders, rollups, redaction, and nested Git
+  working directories.
+
+### Changed
+
+- Hook state is isolated by repo and session, with serialized writes.
+- Hook stdin is consumed as an async stream across file, FIFO, and socket input.
+- PostCompact summaries are retained as bounded deltas after recent PreCompact
+  checkpoints.
+- Bootstrap, rollup, and recall prefer valid active artifacts.
+- Git evidence includes staged changes and uses bounded output.
+- New repo excludes cover agent-crystallize artifacts only. Existing broad
+  legacy protections remain until explicit `init --migrate-excludes` review.
+
+### Fixed
+
+- Same-second artifacts no longer overwrite each other.
+- Unknown checkpoint/crystal flags fail instead of becoming body text.
+- Nested working directories no longer create fragmented `.agent-crystals`
+  roots inside a Git repository.
+- Common uppercase environment-style secret assignments are redacted from
+  hook-derived text.
+- Invalid or ambiguously named superseders cannot hide a valid artifact.

@@ -31,6 +31,17 @@ agent-crystallize setup --dry-run --codex --claude
 the selected harnesses. Existing different skill files are not overwritten
 unless you pass `--force`.
 
+After a package upgrade, run `doctor --codex --claude` to detect generated
+protocol or skill copies that differ from the installed package. Review them,
+then use the explicit, backup-preserving upgrade path:
+
+```bash
+agent-crystallize setup --codex --claude --skills --upgrade
+```
+
+The previous files remain beside their replacements as timestamped `.bak`
+files. The package does not mutate harness configuration from `postinstall`.
+
 ## Skill Support Matrix
 
 The bundled skill uses the Agent Skills / `SKILL.md` folder format. It is a
@@ -106,6 +117,32 @@ Repos initialized before this config/profile existed can rerun
 `agent-crystallize init --project <slug> --artifact-profile <name>`. Existing
 artifacts are preserved; init only establishes future defaults and managed local
 exclude rules.
+
+Older releases also managed broad patterns such as `docs/private/` and
+`*.private.md`. A normal `init` preserves those existing protections and reports
+`legacy_protections_retained`; it does not add them to new repos. After reviewing
+the repo's privacy boundary, remove only that legacy managed subset explicitly:
+
+```bash
+agent-crystallize init --migrate-excludes --no-checkpoint
+```
+
+This never edits `.gitignore`; it only updates agent-crystallize's marked block
+inside the repo-local Git exclude file.
+
+## Recall Relevant Context
+
+Use local recall when resuming, handing off, or beginning work where prior
+decisions may matter:
+
+```bash
+agent-crystallize recall "payment callback replay" --topic payments --trace
+```
+
+The command searches local artifacts only. It excludes invalid and superseded
+artifacts by default, bounds output to five results, and returns match reasons
+plus short snippets. Open the selected artifact before relying on it; lexical
+relevance is not authority or freshness.
 
 Generated crystals are local work artifacts by default. Commit them only when
 they are intentionally reviewed and sanitized.

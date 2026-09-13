@@ -2,8 +2,8 @@
 
 **Repo:** `agent-crystallize`  
 **Package:** `@stewie-sh/agent-crystallize`  
-**Phase:** public seed / first npm release  
-**Date:** July 2026
+**Phase:** public early release / active dogfooding
+**Date:** September 2026
 
 ## Current State
 
@@ -26,7 +26,9 @@ Crystallization:
   Claude Code and manual portability for other Agent Skills-compatible
   harnesses.
 
-The next patch release is prepared as `@stewie-sh/agent-crystallize@0.1.13`.
+The next patch release is being hardened after cross-repo Codex and Claude Code
+dogfooding. No release is implied until the exact package artifact passes public
+safety review.
 
 ## What Is Stable Enough To Review
 
@@ -60,6 +62,9 @@ The next patch release is prepared as `@stewie-sh/agent-crystallize@0.1.13`.
 - The hook installer/plugin story for Codex and Claude Code.
 - The best long-term installation/update flow for skills across harnesses.
 - Post-release feedback from real Codex and Claude Code hook usage.
+- Semantic recall is intentionally bounded and lexical in the local CLI;
+  automatic semantic injection, retention policy, and richer ranking remain
+  experimental future work.
 - GitHub Actions release publishing is configured for version tags and verified
   with npm Trusted Publishing as of `v0.1.4`; no npm token is committed here.
 

@@ -26,7 +26,7 @@ It exists to publish:
 
 ## Reality And Observability Rule
 
-- This tool is still pre-public and dogfood-stage. Bugs, malformed artifacts,
+- This tool is public, early-release, and dogfood-stage. Bugs, malformed artifacts,
   stale assumptions, and awkward output are expected.
 - Early systems are allowed to be imperfect; they are not allowed to be opaque.
 - Preserve enough trace to debug and recover: commands, outputs, generated file

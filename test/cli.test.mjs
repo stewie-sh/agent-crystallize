@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 
 const cli = resolve("dist/index.js");
@@ -49,16 +49,33 @@ test("subcommand help is read-only", () => {
 
 test("setup installs CLI discovery and non-validated emergency guidance", () => {
   const home = mkdtempSync(join(tmpdir(), "agent-crystallize-setup-home-"));
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-setup-repo-"));
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
   const result = json(run(["setup", "--codex", "--skills"], {
-    env: { ...process.env, HOME: home, USERPROFILE: home },
+    env,
   }));
   const skillPath = join(home, ".codex", "skills", "agent-context-crystallizer", "SKILL.md");
+  const protocolPath = join(home, ".agents", "context-persistence-protocol.md");
   const skill = readFileSync(skillPath, "utf8");
 
   assert.match(skill, /Resolve The CLI Before Writing/);
   assert.match(skill, /AGENT_CRYSTALLIZE_CLI/);
   assert.match(skill, /non-validated\s+emergency handoff/);
   assert.ok(result.nextActions.some((item) => item.includes("Verify the agent harness can resolve the CLI")));
+
+  json(run(["init", "--repo", repo, "--no-checkpoint", "--no-agents-md"], { env }));
+  writeFileSync(protocolPath, "old generated protocol\n");
+  writeFileSync(skillPath, "old generated skill\n");
+  const doctor = json(run(["doctor", "--repo", repo, "--codex"], { env }));
+  assert.equal(doctor.upgradeAvailable, true);
+  assert.ok(doctor.checks.some((check) => check.status === "outdated_or_modified"));
+
+  const upgraded = json(run(["setup", "--codex", "--skills", "--upgrade"], { env }));
+  assert.match(readFileSync(protocolPath, "utf8"), /Distribution: agent-crystallize\//);
+  assert.match(readFileSync(skillPath, "utf8"), /Resolve The CLI Before Writing/);
+  assert.ok(upgraded.actions.some((action) => action.detail?.includes("previous file preserved")));
+  assert.ok(readdirSync(dirname(protocolPath)).some((name) => name.includes("pre-agent-crystallize-upgrade")));
+  assert.ok(readdirSync(dirname(skillPath)).some((name) => name.includes("pre-agent-crystallize-upgrade")));
 });
 
 function runHook(repo, stateDir, event, input = {}) {
@@ -66,6 +83,23 @@ function runHook(repo, stateDir, event, input = {}) {
     ["hook", "--repo", repo, "--harness", "claude-code", "--event", event, "--state-dir", stateDir, "--strict-precompact"],
     { input: JSON.stringify({ cwd: repo, hook_event_name: event, session_id: "fixture-session", ...input }) },
   );
+}
+
+function runHookAsync(repo, stateDir, event, input = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(
+      process.execPath,
+      [cli, "hook", "--repo", repo, "--harness", "codex", "--event", event, "--state-dir", stateDir],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (status) => resolvePromise({ status, stdout, stderr }));
+    child.stdin.end(JSON.stringify({ cwd: repo, hook_event_name: event, ...input }));
+  });
 }
 
 test("free-form bodies cannot inject schema headings and validation rejects duplicate recognized sections", () => {
@@ -266,6 +300,30 @@ test("reviewed-shared keeps mechanical artifacts local and session crystals comm
   assert.equal(checkIgnored(session.path), 0);
 });
 
+test("init narrows new excludes but requires explicit migration for legacy broad protections", () => {
+  const fresh = mkdtempSync(join(tmpdir(), "agent-crystallize-fresh-excludes-"));
+  git(fresh, ["init", "-q"]);
+  json(run(["init", "--repo", fresh, "--no-checkpoint", "--no-agents-md"]));
+  const freshExclude = readFileSync(gitPath(fresh, ["rev-parse", "--git-path", "info/exclude"]), "utf8");
+  assert.match(freshExclude, /^\.agent-crystals\/$/m);
+  assert.doesNotMatch(freshExclude, /^docs\/private\/$/m);
+
+  const legacy = mkdtempSync(join(tmpdir(), "agent-crystallize-legacy-excludes-"));
+  git(legacy, ["init", "-q"]);
+  const legacyPath = gitPath(legacy, ["rev-parse", "--git-path", "info/exclude"]);
+  writeFileSync(legacyPath, `# agent-crystallize:artifact-profile:start\n# profile: local-private\n.agent-crystals/\ndocs/private/\n*.private.md\n# agent-crystallize:artifact-profile:end\n`);
+  const retained = json(run(["init", "--repo", legacy, "--no-checkpoint", "--no-agents-md"]));
+  assert.match(readFileSync(legacyPath, "utf8"), /^docs\/private\/$/m);
+  assert.match(retained.actions.find((action) => action.path === legacyPath)?.detail ?? "", /legacy broad protections retained/);
+  const doctor = json(run(["doctor", "--repo", legacy]));
+  assert.equal(doctor.checks.find((check) => check.name === "repo:git-info-exclude")?.status, "legacy_protections_retained");
+
+  json(run(["init", "--repo", legacy, "--no-checkpoint", "--no-agents-md", "--migrate-excludes"]));
+  const migrated = readFileSync(legacyPath, "utf8");
+  assert.doesNotMatch(migrated, /^docs\/private\/$/m);
+  assert.doesNotMatch(migrated, /^\*\.private\.md$/m);
+});
+
 test("init rejects unknown artifact profiles", () => {
   const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-invalid-profile-"));
   const result = run([
@@ -327,4 +385,143 @@ test("Claude PostCompact is side-effect-only and reinjects once through supporte
   assert.equal(sessionStart.hookSpecificOutput.hookEventName, "SessionStart");
   assert.match(sessionStart.hookSpecificOutput.additionalContext, /agent-crystallize bootstrap/i);
   assert.equal(runHook(sessionRepo, sessionState, "UserPromptSubmit", { prompt: "continue after compact" }).stdout, "");
+});
+
+test("checkpoint writes are exclusive and unknown flags fail closed", () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-exclusive-"));
+  json(run(["init", "--repo", repo, "--no-checkpoint", "--no-agents-md"]));
+  const first = json(run(["checkpoint", "--repo", repo, "--title", "Collision fixture", "--body", "first body"]));
+  const second = json(run(["checkpoint", "--repo", repo, "--title", "Collision fixture", "--body", "second body"]));
+  assert.notEqual(first.path, second.path);
+  assert.match(readFileSync(first.path, "utf8"), /first body/);
+  assert.match(readFileSync(second.path, "utf8"), /second body/);
+
+  const typo = run(["checkpoint", "--repo", repo, "--boddy", "must not become body"]);
+  assert.equal(typo.status, 1);
+  assert.match(typo.stderr, /Unexpected checkpoint arguments: --boddy/);
+});
+
+test("nested cwd resolves to the Git root and captures staged files", () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-root-"));
+  const nested = join(repo, "packages", "app");
+  mkdirSync(nested, { recursive: true });
+  git(repo, ["init", "-q"]);
+  git(repo, ["config", "user.email", "fixture@example.com"]);
+  git(repo, ["config", "user.name", "Fixture"]);
+  writeFileSync(join(repo, "seed.txt"), "seed\n");
+  git(repo, ["add", "seed.txt"]);
+  git(repo, ["commit", "-qm", "seed"]);
+  json(run(["init", "--repo", nested, "--project", "root-fixture", "--no-checkpoint", "--no-agents-md"]));
+  writeFileSync(join(repo, "staged.txt"), "staged\n");
+  git(repo, ["add", "staged.txt"]);
+  const checkpoint = json(run(["checkpoint", "--repo", nested, "--body", "root and staged fixture"]));
+  assert.ok(checkpoint.path.startsWith(join(repo, ".agent-crystals")));
+  const markdown = readFileSync(checkpoint.path, "utf8");
+  assert.match(markdown, new RegExp(`^- Repo: ${repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+  assert.match(markdown, /^staged\.txt$/m);
+});
+
+test("hook stdin is consumed, redacted, session-isolated, and concurrency-safe", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-hook-hardening-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "agent-crystallize-hook-hardening-state-"));
+  json(run(["init", "--repo", repo, "--project", "hook-hardening", "--no-checkpoint", "--no-agents-md"]));
+
+  const pre = runHook(repo, stateDir, "PreCompact", {
+    session_id: "session-a",
+    trigger: "manual GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz",
+    custom_instructions: "keep AWS_SECRET_ACCESS_KEY=abcdefghijklmnop",
+  });
+  assert.equal(pre.status, 0, pre.stderr || pre.stdout);
+  const afterPre = checkpointFiles(repo);
+  assert.equal(afterPre.length, 1);
+  const preBody = readFileSync(afterPre[0], "utf8");
+  assert.match(preBody, /Session id: session-a/);
+  assert.match(preBody, /GITHUB_TOKEN=\[REDACTED\]/);
+  assert.match(preBody, /AWS_SECRET_ACCESS_KEY=\[REDACTED\]/);
+  assert.doesNotMatch(preBody, /ghp_abcdefghijklmnopqrstuvwxyz|abcdefghijklmnop/);
+
+  const post = runHook(repo, stateDir, "PostCompact", {
+    session_id: "session-a",
+    compact_summary: "summary with API_KEY=supersecretvalue",
+  });
+  assert.equal(post.status, 0, post.stderr || post.stdout);
+  const afterPost = checkpointFiles(repo);
+  assert.equal(afterPost.length, 2);
+  const delta = readFileSync(afterPost.find((path) => path !== afterPre[0]), "utf8");
+  assert.match(delta, /Post-compact summary delta/);
+  assert.match(delta, /API_KEY=\[REDACTED\]/);
+  assert.doesNotMatch(delta, /supersecretvalue/);
+  const repeatedPost = runHook(repo, stateDir, "PostCompact", {
+    session_id: "session-a",
+    compact_summary: "summary with API_KEY=supersecretvalue",
+  });
+  assert.equal(repeatedPost.status, 0, repeatedPost.stderr || repeatedPost.stdout);
+  assert.equal(checkpointFiles(repo).length, 2);
+
+  const sessionB = runHook(repo, stateDir, "SessionStart", { session_id: "session-b" });
+  assert.equal(sessionB.status, 0, sessionB.stderr || sessionB.stdout);
+  const state = JSON.parse(readFileSync(join(stateDir, "state.json"), "utf8"));
+  assert.equal(Object.keys(state.projects).length, 2);
+
+  const concurrent = await Promise.all(
+    Array.from({ length: 8 }, (_, index) => runHookAsync(repo, stateDir, "PostToolUse", { session_id: `parallel-${index}` })),
+  );
+  for (const result of concurrent) assert.equal(result.status, 0, result.stderr || result.stdout);
+  const finalState = JSON.parse(readFileSync(join(stateDir, "state.json"), "utf8"));
+  assert.equal(Object.keys(finalState.projects).length, 10);
+
+  const malformed = run(
+    ["hook", "--repo", repo, "--harness", "codex", "--event", "PostToolUse", "--state-dir", stateDir],
+    { input: "{not-json" },
+  );
+  assert.equal(malformed.status, 1);
+  assert.match(malformed.stderr, /Invalid hook JSON on stdin/);
+});
+
+test("invalid artifacts cannot supersede or enter bootstrap and checkpoint rollups", () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-validity-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "agent-crystallize-validity-state-"));
+  json(run(["init", "--repo", repo, "--no-checkpoint", "--no-agents-md"]));
+  const original = json(run(["checkpoint", "--repo", repo, "--title", "Durable original", "--body", "valid durable focus"]));
+  const invalidPath = join(repo, ".agent-crystals", "checkpoints", "99999999T999999Z-invalid.md");
+  writeFileSync(invalidPath, `# Malformed superseder\n\n## Relation Hints\n\n- supersedes:${original.relativePath}\n`);
+
+  const firstManifest = json(run(["manifest", "--repo", repo, "--include-superseded"]));
+  assert.equal(firstManifest.invalidCount, 1);
+  assert.ok(firstManifest.activeArtifacts.some((item) => item.path === original.relativePath));
+  assert.ok(firstManifest.invalidArtifacts.some((item) => item.path.endsWith("invalid.md")));
+
+  const bootstrap = runHook(repo, stateDir, "SessionStart", { session_id: "validity-session" });
+  assert.equal(bootstrap.status, 0, bootstrap.stderr || bootstrap.stdout);
+  assert.match(bootstrap.stdout, new RegExp(original.relativePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(bootstrap.stdout, /invalid\.md/);
+
+  const replacement = json(run([
+    "checkpoint", "--repo", repo, "--title", "Durable replacement", "--body", "replacement focus",
+    "--relation", `supersedes:${original.relativePath}`,
+  ]));
+  const rollup = json(run(["now", "--repo", repo, "--from-checkpoints", "latest", "--body", "rollup fixture"]));
+  const rollupBody = readFileSync(rollup.path, "utf8");
+  assert.match(rollupBody, new RegExp(replacement.relativePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(rollupBody, new RegExp(original.relativePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(rollupBody, /invalid\.md/);
+});
+
+test("recall ranks bounded valid active local artifacts and explains matches", () => {
+  const repo = mkdtempSync(join(tmpdir(), "agent-crystallize-recall-"));
+  json(run(["init", "--repo", repo, "--no-checkpoint", "--no-agents-md"]));
+  const old = json(run([
+    "checkpoint", "--repo", repo, "--title", "Login decision", "--body", "Use password login only.", "--topic", "authentication",
+  ]));
+  const current = json(run([
+    "checkpoint", "--repo", repo, "--title", "Login correction", "--body", "Add social login after user validation.",
+    "--topic", "authentication", "--relation", `supersedes:${old.relativePath}`, "--session-id", "recall-session",
+  ]));
+  const recalled = json(run(["recall", "--repo", repo, "social login", "--topic", "authentication", "--limit", "3", "--trace"]));
+  assert.equal(recalled.resultCount, 1);
+  assert.equal(recalled.results[0].path, current.relativePath);
+  assert.ok(recalled.results[0].score > 0);
+  assert.ok(recalled.results[0].matched.length > 0);
+  assert.equal(recalled.trace.artifactCount, 2);
+  assert.equal(recalled.trace.candidateCount, 1);
 });

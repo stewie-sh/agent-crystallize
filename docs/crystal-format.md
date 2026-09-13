@@ -35,6 +35,15 @@ Hook state is not stored in `.agent-crystals/` by default. `agent-crystallize
 hook` keeps dedupe/activity state under `~/.agent-crystallize/hooks` unless
 `--state-dir` is supplied.
 
+Artifact filenames are reserved with exclusive creation. Two captures that land
+in the same timestamp/slug receive deterministic numeric suffixes rather than
+silently overwriting each other.
+
+The manifest separates schema-invalid evidence from valid active artifacts.
+Only a valid artifact can supersede another artifact, and bootstrap, checkpoint
+rollup, and recall use valid active artifacts by default. Invalid files remain
+visible in `invalidArtifacts` for repair and provenance; they are not deleted.
+
 ## Sections
 
 Generated artifacts include:
