@@ -64,8 +64,8 @@ test("setup installs CLI discovery and non-validated emergency guidance", () => 
   assert.ok(result.nextActions.some((item) => item.includes("Verify the agent harness can resolve the CLI")));
 
   json(run(["init", "--repo", repo, "--no-checkpoint", "--no-agents-md"], { env }));
-  writeFileSync(protocolPath, "old generated protocol\n");
-  writeFileSync(skillPath, "old generated skill\n");
+  writeFileSync(protocolPath, readFileSync(protocolPath, "utf8") + "\nOld customization\n");
+  writeFileSync(skillPath, skill + "\nOld customization\n");
   const doctor = json(run(["doctor", "--repo", repo, "--codex"], { env }));
   assert.equal(doctor.upgradeAvailable, true);
   assert.ok(doctor.checks.some((check) => check.status === "outdated_or_modified"));
@@ -76,6 +76,31 @@ test("setup installs CLI discovery and non-validated emergency guidance", () => 
   assert.ok(upgraded.actions.some((action) => action.detail?.includes("previous file preserved")));
   assert.ok(readdirSync(dirname(protocolPath)).some((name) => name.includes("pre-agent-crystallize-upgrade")));
   assert.ok(readdirSync(dirname(skillPath)).some((name) => name.includes("pre-agent-crystallize-upgrade")));
+});
+
+test("doctor preserves custom canonical pointers and reports missing targets", () => {
+  const home = mkdtempSync(join(tmpdir(), "crystal-custom-home-"));
+  const repo = mkdtempSync(join(tmpdir(), "crystal-custom-repo-"));
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  json(run(["setup", "--codex", "--skills"], { env }));
+  const protocol = join(home, ".agents", "context-persistence-protocol.md");
+  const pointer = join(home, ".codex", "skills", "agent-context-crystallizer", "SKILL.md");
+  const global = join(home, ".codex", "AGENTS.md");
+  writeFileSync(protocol, "Custom organization instructions\n");
+  writeFileSync(pointer, "Read ~/.agents/skills/agent-context-crystallizer/SKILL.md\n");
+  writeFileSync(global, "Follow ~/.agents/context-persistence-protocol.md\n");
+  const before = [protocol, pointer, global].map(path => readFileSync(path, "utf8"));
+  let result = json(run(["doctor", "--repo", repo, "--codex"], { env }));
+  assert.equal(result.upgradeAvailable, false);
+  assert.ok(result.checks.some(check => check.status === "broken_pointer"));
+  const canonical = join(home, ".agents", "skills", "agent-context-crystallizer", "SKILL.md");
+  mkdirSync(dirname(canonical), { recursive: true });
+  writeFileSync(canonical, "Custom canonical procedure\n");
+  result = json(run(["doctor", "--repo", repo, "--codex"], { env }));
+  assert.equal(result.upgradeAvailable, false);
+  assert.equal(result.checks.filter(check => check.status === "custom_pointer").length, 2);
+  assert.ok(result.checks.some(check => check.status === "custom_or_unrecognized"));
+  assert.deepEqual([protocol, pointer, global].map(path => readFileSync(path, "utf8")), before);
 });
 
 function runHook(repo, stateDir, event, input = {}) {

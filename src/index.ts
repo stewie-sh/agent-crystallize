@@ -379,7 +379,7 @@ async function doctor(rest: string[]) {
               "If hook trust is unknown, keep using manual agent-crystallize checkpoint/now before compaction or handoff.",
             ]
           : ["Use agent-crystallize checkpoint during long work and agent-crystallize now before handoff or compaction."]
-        : ["Run agent-crystallize init in this repo.", "Run agent-crystallize setup --codex or --claude for harness-global pointers."],
+        : ["Run agent-crystallize init in this repo; preserve custom global instructions and pointers."],
   };
 }
 
@@ -1150,12 +1150,23 @@ function installSkill(
 function checkGeneratedFile(name: string, path: string, expected: string) {
   if (!existsSync(path)) return { name, path, required: false, status: "missing_optional" };
   const current = readFileSync(path, "utf8");
+  const canonicalSkill = "~/.agents/skills/agent-context-crystallizer/SKILL.md";
+  const pointer = path.endsWith("SKILL.md") && current.includes(canonicalSkill);
+  const targetExists = pointer && existsSync(resolve(homedir(), ".agents", "skills", "agent-context-crystallizer", "SKILL.md"));
+  const generated = /^Distribution: agent-crystallize\//m.test(current) ||
+    current.startsWith("---\nname: agent-context-crystallizer\n") && current.includes("## Resolve The CLI Before Writing");
+  const status = current === expected ? "ok" : pointer
+    ? targetExists ? "custom_pointer" : "broken_pointer"
+    : generated ? "outdated_or_modified" : "custom_or_unrecognized";
   return {
     name,
     path,
     required: false,
-    status: current === expected ? "ok" : "outdated_or_modified",
-    detail: current === expected ? undefined : "installed generated file differs from this package; inspect before setup --upgrade",
+    status,
+    detail: status === "ok" ? undefined : status === "outdated_or_modified"
+      ? "Recognizable package template differs; review custom edits before setup --upgrade."
+      : status === "broken_pointer" ? "Canonical skill target is missing; repair the pointer before relying on it."
+      : "Custom or unrecognized configuration; preserve it and review manually. Template difference alone does not establish an available upgrade.",
   };
 }
 
@@ -1401,11 +1412,15 @@ function resolveGitExcludePath(repo: string) {
 
 function checkManagedPointer(name: string, path: string) {
   const body = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const customPointer = body.includes("~/.agents/context-persistence-protocol.md");
+  const customTargetExists = existsSync(resolve(homedir(), ".agents", "context-persistence-protocol.md"));
   return {
     name,
     path,
     required: false,
-    status: body.includes(managedStart) && body.includes("agent-crystallize") ? "ok" : existsSync(path) ? "missing_pointer" : "missing_optional",
+    status: body.includes(managedStart) && body.includes("agent-crystallize") ? "ok"
+      : customPointer ? customTargetExists ? "custom_pointer" : "broken_pointer"
+      : existsSync(path) ? "missing_pointer" : "missing_optional",
   };
 }
 

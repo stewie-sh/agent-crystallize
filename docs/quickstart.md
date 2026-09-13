@@ -154,6 +154,10 @@ and unknown installs must not be replaced based on version metadata alone.
 No update is installed automatically. Older CLIs can reject this flag; continue
 working and suggest upgrading once. Generated instruction drift and npm version
 availability are separate checks.
+Doctor reports custom pointers as `custom_pointer` when the referenced canonical
+file exists, or `broken_pointer` when missing. `custom_or_unrecognized` means
+manual review is needed, not that an upgrade is available. These checks establish
+file presence, not whether a harness actually loads or follows the instructions.
 
 ### Relevant Artifacts
 

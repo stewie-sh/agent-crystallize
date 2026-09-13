@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Doctor distinguishes custom canonical pointers and unrecognized configuration
+  from recognizable generated-template drift; missing canonical targets remain visible.
+
 - Add opt-in `doctor --updates` with bounded npm checks, local cache, update hints,
   and conservative handling of local or unknown install provenance. Never installs
   updates automatically; skill and generated protocol include awareness guidance.
