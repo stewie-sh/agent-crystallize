@@ -48,6 +48,27 @@ The goal is practical recovery first, deeper memory synthesis later.
 - Optional hook installers that detect existing hook commands instead of adding
   duplicate lifecycle writers.
 
+## Deferred: Optional Hybrid Recall
+
+After the current capture/recovery release, evaluate an opt-in semantic adapter
+alongside lexical recall. This is planned research, not a shipped capability or a
+release dependency.
+
+- Keep lexical retrieval available offline without model downloads or an account.
+- Compare local embeddings with explicitly consented API embeddings; never send
+  artifact bodies to an external provider by default.
+- Combine exact identifier/path/error matches with semantic candidates. Apply
+  scope, validation and lifecycle checks before returning usable context.
+- Cache embeddings by content hash and model/version; account for edits, archive,
+  supersession and consolidation without rebuilding unchanged artifacts.
+- Evaluate on fixed queries with expected source artifacts: paraphrases, multilingual
+  queries, exact identifiers, stale/conflicting sources and no-answer cases.
+- Measure relevant-source recall, noise, latency, indexing cost and local resource
+  use against the lexical baseline. Similarity is not authority or confidence in truth.
+- Proceed only if semantic retrieval recovers useful sources the lexical baseline
+  misses without unacceptable noise or resource cost. Cross-project cognition and
+  knowledge promotion remain concerns of optional higher-level systems.
+
 ## Public Launch Checklist
 
 For each public release or announcement:
