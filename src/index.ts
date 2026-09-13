@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkUpdates } from "./updates.js";
+import { actions, applyAnnotations, writeAnnotation, type Action } from "./lifecycle.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -79,6 +80,10 @@ async function run(name: string | undefined, rest: string[]) {
       return manifest(rest);
     case "recall":
       return recall(rest);
+    case "annotate":
+      return annotate(rest);
+    case "current-state":
+      return currentState(rest);
     case "hook":
       return hook(rest);
     case "setup":
@@ -141,6 +146,10 @@ interface ArtifactRecord {
     warnings: string[];
   };
   supersededBy: string[];
+  archived: boolean;
+  consolidatedInto: string[];
+  annotations: Array<{ id: string; action: string; reason: string; source: string; at: string; target?: string }>;
+  lifecycleIssues: string[];
 }
 
 interface RecallResult {
@@ -1277,7 +1286,7 @@ function renderArtifactProfileExclude(artifactProfile: ArtifactProfile, retainLe
   const artifactPatterns =
     artifactProfile === "local-private"
       ? [".agent-crystals/"]
-      : [".agent-crystals/checkpoints/", ".agent-crystals/manifest.json", ".agent-crystals/config.json"];
+      : [".agent-crystals/checkpoints/", ".agent-crystals/annotations/", ".agent-crystals/manifest.json", ".agent-crystals/config.json"];
   const legacyPatterns = retainLegacyBroadProtections
     ? [
         "",
@@ -1574,7 +1583,63 @@ function validate(rest: string[]) {
   };
 }
 
+function annotate(rest: string[]) {
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
+  const paths = takeRepeatedFlag(rest, "--artifact");
+  const action = takeFlag(rest, "--action") as Action;
+  const reason = takeFlag(rest, "--reason")?.trim();
+  const source = takeFlag(rest, "--source-ref")?.trim();
+  const target = takeFlag(rest, "--target");
+  if (rest.length || !paths.length || !actions.includes(action) || !reason || !source) {
+    throw new Error("annotate requires --artifact, --action, --reason and --source-ref; unknown arguments are rejected.");
+  }
+  const records = collectArtifactRecords(repo, ".agent-crystals");
+  const lookup = (path: string) => records.find(record => record.path === relative(repo, resolve(repo, path)));
+  const selected = paths.map(path => lookup(path));
+  if (selected.some(record => !record || !isValidArtifact(record))) throw new Error("Every artifact must be an existing valid local crystal/checkpoint.");
+  const destination = target ? lookup(target) : undefined;
+  if (action !== "archive" && action !== "restore" && !destination) throw new Error("This relation requires --target.");
+  if (destination && (!isValidActiveArtifact(destination) || selected.some(record => record!.path === destination.path))) {
+    throw new Error("Target must be valid, active, and distinct from sources.");
+  }
+  if (target && !destination) throw new Error("Target was not found.");
+  if (destination && selected.some(record => record!.project !== destination.project || record!.scope !== destination.scope)) {
+    throw new Error("Annotation source and target must share project and scope.");
+  }
+  upsertLocalExclude(repo, resolveArtifactProfile(repo), false, false);
+  const result = writeAnnotation(repo, [...new Set(selected.map(record => record!.path))], action, reason, source, destination?.path);
+  return { ok: true, ...result, manifest: manifest(["--repo", repo, "--write"]) };
+}
+
+async function currentState(rest: string[]) {
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
+  const paths = takeRepeatedFlag(rest, "--artifact");
+  const topic = takeFlag(rest, "--topic")?.trim();
+  const body = takeFlag(rest, "--body")?.trim();
+  const reason = takeFlag(rest, "--reason")?.trim();
+  const source = takeFlag(rest, "--source-ref")?.trim();
+  if (rest.length || !paths.length || !topic || !body || !reason || !source) {
+    throw new Error("current-state requires explicit --artifact sources, --topic, --body synthesis, --reason and --source-ref.");
+  }
+  const records = collectArtifactRecords(repo, ".agent-crystals");
+  const selected = paths.map(path => records.find(record => record.path === relative(repo, resolve(repo, path))));
+  if (selected.some(record => !record || !isValidActiveArtifact(record))) throw new Error("Rollup sources must be valid and active.");
+  if (new Set(selected.map(record => `${record!.project}:${record!.scope}`)).size !== 1) throw new Error("Rollup sources must share project and scope.");
+  const refs = [...new Set(selected.map(record => record!.path))];
+  const result = await crystallize([
+    "--repo", repo, "--project", selected[0]!.project!, "--scope", selected[0]!.scope!,
+    "--title", `Current state - ${topic}`, "--topic", topic, "--body", body,
+    "--source-ref", source, "--finding", reason,
+    ...refs.flatMap(path => ["--relation", `derived_from:${path}`]),
+    "--open-loop", "Verify this synthesis against its sources and live state before consequential action.",
+  ], "crystal") as { relativePath: string };
+  const annotation = annotate(["--repo", repo, ...refs.flatMap(path => ["--artifact", path]),
+    "--action", "consolidated", "--target", result.relativePath, "--reason", reason, "--source-ref", source]);
+  return { ok: true, currentState: result, annotation };
+}
+
 function recall(rest: string[]) {
+  const includeInactive = takeBooleanFlag(rest, "--include-inactive");
   const includeWeak = takeBooleanFlag(rest, "--include-weak");
   const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
   const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
@@ -1603,6 +1668,7 @@ function recall(rest: string[]) {
   const candidates = allRecords.filter((record) => {
     if (!includeInvalid && !isValidArtifact(record)) return false;
     if (!includeSuperseded && record.supersededBy.length > 0) return false;
+    if (!includeInactive && (record.archived || record.consolidatedInto.length > 0)) return false;
     if (since !== undefined && Date.parse(record.observedAt ?? record.mtime) < since) return false;
     return true;
   });
@@ -1676,7 +1742,7 @@ function recall(rest: string[]) {
     repo,
     crystalsDir,
     query: query || undefined,
-    filters: { topics, files, sessionId, since: sinceValue, includeInvalid, includeSuperseded, includeWeak },
+    filters: { topics, files, sessionId, since: sinceValue, includeInvalid, includeSuperseded, includeWeak, includeInactive },
     resultCount: Math.min(results.length, limit),
     results: results.slice(0, limit),
     trace: trace
@@ -1716,6 +1782,8 @@ function manifest(rest: string[]) {
     activeCount: activeArtifacts.length,
     supersededCount: supersededArtifacts.length,
     activeArtifacts,
+    inactiveArtifacts: records.filter(record => record.archived || record.consolidatedInto.length > 0),
+    lifecycleIssues: [...new Set(records.flatMap(record => record.lifecycleIssues))],
     invalidArtifacts,
     supersededArtifacts: includeSuperseded ? supersededArtifacts : undefined,
   };
@@ -1762,6 +1830,8 @@ function collectArtifactRecords(repo: string, crystalsDir: string): ArtifactReco
   for (const record of records) {
     record.supersededBy = supersededBy.get(record.path) ?? [];
   }
+  const lifecycleIssues = applyAnnotations(repo, records);
+  for (const record of records) record.lifecycleIssues = lifecycleIssues;
   return records.sort((a, b) => {
     const byObserved = (b.observedAt ?? b.mtime).localeCompare(a.observedAt ?? a.mtime);
     return byObserved || a.path.localeCompare(b.path);
@@ -1773,7 +1843,7 @@ function isValidArtifact(record: ArtifactRecord) {
 }
 
 function isValidActiveArtifact(record: ArtifactRecord) {
-  return isValidArtifact(record) && record.supersededBy.length === 0;
+  return isValidArtifact(record) && record.supersededBy.length === 0 && !record.archived && record.consolidatedInto.length === 0;
 }
 
 function artifactRecordFromFile(repo: string, absolutePath: string): ArtifactRecord {
@@ -1796,6 +1866,10 @@ function artifactRecordFromFile(repo: string, absolutePath: string): ArtifactRec
       warnings: validation.warnings,
     },
     supersededBy: [],
+    archived: false,
+    consolidatedInto: [],
+    annotations: [],
+    lifecycleIssues: [],
   };
 }
 
@@ -1988,7 +2062,7 @@ function collectCheckpointTrail(repo: string, checkpointDir: string): Checkpoint
   const absoluteDir = resolve(repo, checkpointDir);
   if (!existsSync(absoluteDir)) return [];
 
-  return collectArtifactRecords(repo, checkpointDir)
+  return collectArtifactRecords(repo, checkpointDir === ".agent-crystals/checkpoints" ? ".agent-crystals" : checkpointDir)
     .filter((record) => record.kind === "checkpoint" && isValidActiveArtifact(record))
     .slice(0, 5)
     .map((record) => ({
@@ -2545,6 +2619,8 @@ Commands:
   agent-crystallize validate [options]
   agent-crystallize manifest [options]
   agent-crystallize recall [options] <query>
+  agent-crystallize annotate --artifact <path> --action <archive|restore|consolidated|superseded|corrects|follows-up|relates-to> --reason <text> --source-ref <ref> [--target <path>]
+  agent-crystallize current-state --artifact <path> [--artifact <path>] --topic <topic> --body <synthesis> --reason <text> --source-ref <ref>
   agent-crystallize hook [options]
 
 Setup options:
@@ -2626,6 +2702,7 @@ Manifest options:
   --write                    Write .agent-crystals/manifest.json
 
 Recall options:
+  --include-inactive        Include archived and consolidated sources for recovery
   --include-weak            Include partial matches excluded by coverage/rarity filtering
   --repo <path>              Repo to search; default cwd (resolved to Git root)
   --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals

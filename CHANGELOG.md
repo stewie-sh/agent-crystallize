@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add append-only local lifecycle annotations and explicit-source current-state
+  synthesis. Archived/consolidated sources remain recoverable; fingerprint checks
+  prevent changed rollups from silently hiding source context. See docs/lifecycle.md.
+
 - Rank local recall by corpus term rarity and query coverage, with Unicode tokens
   and an explicit `--include-weak` fallback for partial matches.
 

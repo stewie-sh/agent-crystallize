@@ -30,6 +30,14 @@ not silently enter the manifest or normal validation set.
 
 ## Workflow
 
+At a stable milestone, use `current-state --help` to create a topic-scoped
+synthesis from explicitly selected valid active artifacts. Supply the synthesis,
+reason and provenance; the CLI records derived_from links and consolidation.
+Use `annotate` for explained lifecycle changes. Archive is reversible visibility,
+consolidation is not supersession, and age alone does not establish staleness.
+Recall hides archived/consolidated sources by default; `--include-inactive`
+restores audit visibility. Inspect manifest lifecycleIssues before trusting its map.
+
 At session start or first skill use, run `agent-crystallize doctor --updates` when
 available. This opt-in check contacts npm with a two-second timeout and a shared
 24-hour cache (one hour after failure). Only ask about upgrading when

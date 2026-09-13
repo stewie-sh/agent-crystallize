@@ -555,6 +555,50 @@ test("recall ranks bounded valid active local artifacts and explains matches", (
   assert.equal(recalled.trace.candidateCount, 1);
 });
 
+test("lifecycle preserves sources, recovers archived rollups and ignores corrupt annotations", () => {
+  const repo = mkdtempSync(join(tmpdir(), "crystal-lifecycle-"));
+  const first = json(run(["checkpoint", "--repo", repo, "--title", "Login requirement", "--body", "Login requires consent."]));
+  const original = readFileSync(first.path, "utf8");
+  const annotate = (action, extra = []) => json(run(["annotate", "--repo", repo, "--artifact", first.relativePath,
+    "--action", action, "--reason", "Milestone review", "--source-ref", "fixture:review", ...extra]));
+  annotate("archive");
+  assert.equal(json(run(["recall", "--repo", repo, "Login"])).resultCount, 0);
+  assert.equal(json(run(["recall", "--repo", repo, "Login", "--include-inactive"])).resultCount, 1);
+  annotate("restore");
+  assert.equal(json(run(["recall", "--repo", repo, "Login"])).resultCount, 1);
+  const rollup = json(run(["current-state", "--repo", repo, "--artifact", first.relativePath,
+    "--topic", "Login", "--body", "Login still requires explicit consent; verify implementation.",
+    "--reason", "Stable milestone", "--source-ref", "fixture:review"]));
+  let index = json(run(["manifest", "--repo", repo]));
+  assert.equal(index.activeCount, 1);
+  assert.equal(index.inactiveArtifacts[0].consolidatedInto[0], rollup.currentState.relativePath);
+  assert.equal(index.inactiveArtifacts[0].supersededBy.length, 0);
+  assert.equal(readFileSync(first.path, "utf8"), original);
+  assert.match(readFileSync(rollup.currentState.path, "utf8"), /derived_from:/);
+  json(run(["annotate", "--repo", repo, "--artifact", rollup.currentState.relativePath, "--action", "archive",
+    "--reason", "Withdraw projection", "--source-ref", "fixture:withdraw"]));
+  assert.equal(json(run(["recall", "--repo", repo, "Login"])).results[0].path, first.relativePath);
+  const dir = join(repo, ".agent-crystals", "annotations");
+  writeFileSync(join(dir, "invalid.json"), "{}");
+  index = json(run(["manifest", "--repo", repo]));
+  assert.ok(index.lifecycleIssues.length > 0);
+  assert.equal(readFileSync(first.path, "utf8"), original);
+  assert.equal(run(["annotate", "--repo", repo, "--artifact", first.relativePath, "--action", "superseded",
+    "--target", first.relativePath, "--reason", "bad", "--source-ref", "fixture"]).status, 1);
+});
+
+test("changed rollup fingerprint restores sources to default retrieval", () => {
+  const repo = mkdtempSync(join(tmpdir(), "crystal-fingerprint-"));
+  const source = json(run(["checkpoint", "--repo", repo, "--body", "Unique recovery evidence"]));
+  const result = json(run(["current-state", "--repo", repo, "--artifact", source.relativePath,
+    "--topic", "Recovery", "--body", "Recovery current state", "--reason", "test", "--source-ref", "fixture"]));
+  writeFileSync(result.currentState.path, "malformed rollup");
+  const index = json(run(["manifest", "--repo", repo]));
+  assert.equal(index.activeCount, 1);
+  assert.equal(index.activeArtifacts[0].path, source.relativePath);
+  assert.ok(index.lifecycleIssues.length > 0);
+});
+
 test("recall suppresses generic matches with explicit broadening and Unicode support", () => {
   const repo = mkdtempSync(join(tmpdir(), "crystal-ranking-"));
   for (let i = 0; i < 5; i++) json(run(["checkpoint", "--repo", repo,
