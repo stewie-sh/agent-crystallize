@@ -554,3 +554,21 @@ test("recall ranks bounded valid active local artifacts and explains matches", (
   assert.equal(recalled.trace.artifactCount, 2);
   assert.equal(recalled.trace.candidateCount, 1);
 });
+
+test("recall suppresses generic matches with explicit broadening and Unicode support", () => {
+  const repo = mkdtempSync(join(tmpdir(), "crystal-ranking-"));
+  for (let i = 0; i < 5; i++) json(run(["checkpoint", "--repo", repo,
+    "--title", `General context ${i}`, "--body", "Routine context checkpoint for gardening."]));
+  const target = json(run(["checkpoint", "--repo", repo, "--title", "Doctor upgrade decision",
+    "--body", "Context for doctor upgrade. Quyết định nâng cấp."]));
+  const result = json(run(["recall", "--repo", repo, "context doctor upgrade", "--trace"]));
+  assert.equal(result.resultCount, 1);
+  assert.equal(result.results[0].path, target.relativePath);
+  assert.ok(result.trace.weakCount >= 5);
+  const broad = json(run(["recall", "--repo", repo, "context doctor upgrade", "--include-weak", "--limit", "20"]));
+  assert.ok(broad.resultCount > result.resultCount);
+  assert.equal(json(run(["recall", "--repo", repo, "doctor"])).results[0].path, target.relativePath);
+  assert.equal(json(run(["recall", "--repo", repo, "Quyết định"])).results[0].path, target.relativePath);
+  assert.equal(json(run(["recall", "--repo", repo, "xylophoneunseen"])).resultCount, 0);
+  assert.equal(json(run(["recall", "--repo", repo, "doct"])).resultCount, 0);
+});

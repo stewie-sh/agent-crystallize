@@ -161,6 +161,13 @@ file presence, not whether a harness actually loads or follows the instructions.
 
 ### Relevant Artifacts
 
+Recall weights rare terms higher and rewards query coverage. By default, matches
+must cover at least half the query terms and a relatively distinctive term.
+This is lexical matching, not semantic understanding; empty results do not prove
+there is no relevant history. Retry with fewer concrete terms or `--include-weak`
+to inspect partial matches. `--trace` reports term weights and weak-match counts.
+Word matching is Unicode-aware; abbreviations and synonyms are not expanded.
+
 Use local recall when resuming, handing off, or beginning work where prior
 decisions may matter:
 

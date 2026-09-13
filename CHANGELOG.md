@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rank local recall by corpus term rarity and query coverage, with Unicode tokens
+  and an explicit `--include-weak` fallback for partial matches.
+
 - Doctor distinguishes custom canonical pointers and unrecognized configuration
   from recognizable generated-template drift; missing canonical targets remain visible.
 

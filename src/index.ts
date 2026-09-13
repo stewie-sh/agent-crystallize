@@ -1575,6 +1575,7 @@ function validate(rest: string[]) {
 }
 
 function recall(rest: string[]) {
+  const includeWeak = takeBooleanFlag(rest, "--include-weak");
   const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
   const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
   const explicitQuery = takeFlag(rest, "--query");
@@ -1606,16 +1607,26 @@ function recall(rest: string[]) {
     return true;
   });
   const queryTerms = tokenizeQuery(query);
+  const documents = candidates.map(record => {
+    const body = readFileSync(resolve(repo, record.path), "utf8").toLowerCase();
+    return { record, body, tokens: new Set(tokenizeQuery(body)) };
+  });
+  const termWeights = new Map(queryTerms.map(term => {
+    const count = documents.filter(doc => doc.tokens.has(term)).length;
+    return [term, Math.log(1 + (documents.length + 1) / (count + 1))];
+  }));
+  const maxWeight = Math.max(0, ...termWeights.values());
+  let weakCount = 0;
   const results: RecallResult[] = [];
-  for (const record of candidates) {
-    const markdown = readFileSync(resolve(repo, record.path), "utf8");
-    const lowerMarkdown = markdown.toLowerCase();
+  for (const { record, body: lowerMarkdown, tokens } of documents) {
     if (topics.length > 0 && !topics.every((topic) => record.topics.some((value) => value.toLowerCase().includes(topic)))) continue;
     if (files.length > 0 && !files.every((file) => lowerMarkdown.includes(file))) continue;
     if (sessionId && !lowerMarkdown.includes(sessionId)) continue;
 
     const matched: string[] = [];
     let score = 0;
+    let matchedTerms = 0;
+    let distinctiveMatch = false;
     const fields: Array<[string, string, number]> = [
       ["title", record.title.toLowerCase(), 6],
       ["topic", record.topics.join(" ").toLowerCase(), 5],
@@ -1624,9 +1635,13 @@ function recall(rest: string[]) {
       ["body", lowerMarkdown, 1],
     ];
     for (const term of queryTerms) {
+      if (!tokens.has(term)) continue;
+      matchedTerms++;
+      const rarity = termWeights.get(term)!;
+      if (rarity >= maxWeight * 0.65) distinctiveMatch = true;
       for (const [field, value, weight] of fields) {
-        if (!value.includes(term)) continue;
-        score += weight;
+        if (!tokenizeQuery(value).includes(term)) continue;
+        score += weight * rarity;
         matched.push(`${field}:${term}`);
         break;
       }
@@ -1636,6 +1651,13 @@ function recall(rest: string[]) {
       matched.push("exact-phrase");
     }
     if (!query || score > 0) {
+      const weak = queryTerms.length > 0 &&
+        (!distinctiveMatch || matchedTerms < Math.ceil(queryTerms.length / 2));
+      if (weak) {
+        weakCount++;
+        if (!includeWeak) continue;
+      }
+      if (queryTerms.length) score *= matchedTerms / queryTerms.length;
       score += topics.length * 5 + files.length * 3 + (sessionId ? 3 : 0);
       results.push({
         path: record.path,
@@ -1654,17 +1676,18 @@ function recall(rest: string[]) {
     repo,
     crystalsDir,
     query: query || undefined,
-    filters: { topics, files, sessionId, since: sinceValue, includeInvalid, includeSuperseded },
+    filters: { topics, files, sessionId, since: sinceValue, includeInvalid, includeSuperseded, includeWeak },
     resultCount: Math.min(results.length, limit),
     results: results.slice(0, limit),
     trace: trace
-      ? { artifactCount: allRecords.length, candidateCount: candidates.length, matchedCount: results.length }
+      ? { artifactCount: allRecords.length, candidateCount: candidates.length, matchedCount: results.length, weakCount,
+          termWeights: Object.fromEntries(termWeights), broadenHint: "Use --include-weak to inspect partial matches." }
       : undefined,
   };
 }
 
 function tokenizeQuery(query: string) {
-  return [...new Set(query.toLowerCase().match(/[a-z0-9][a-z0-9._/-]*/g) ?? [])].filter((term) => term.length >= 2);
+  return [...new Set((query.normalize("NFC").toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}._/-]*/gu) ?? []).map(term => term.replace(/[.]+$/, "")))].filter((term) => term.length >= 2);
 }
 
 function manifest(rest: string[]) {
@@ -2603,6 +2626,7 @@ Manifest options:
   --write                    Write .agent-crystals/manifest.json
 
 Recall options:
+  --include-weak            Include partial matches excluded by coverage/rarity filtering
   --repo <path>              Repo to search; default cwd (resolved to Git root)
   --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
   --query <text>             Query text; positional text is also accepted
