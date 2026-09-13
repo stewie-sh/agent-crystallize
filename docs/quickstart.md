@@ -292,6 +292,11 @@ When the active agent harness exposes safe session or transcript pointers, add
 them to the checkpoint. This makes future handoff, import, and debugging easier
 without storing raw transcripts in the crystal.
 
+For known sections, newer CLIs support verified `--transcript-lines START-END`
+and read-only `transcript-anchor --expect-sha256` checks. See
+[verified source sections](crystal-format.md#verified-transcript-sections).
+Check `--help` first; older installations still accept free-form `--source-ref`.
+
 ```bash
 agent-crystallize checkpoint \
   --surface codex \

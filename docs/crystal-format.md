@@ -124,6 +124,7 @@ Supported provenance flags:
 - `--conversation-id`
 - `--task-id`
 - `--transcript-uri`
+- `--transcript-lines START-END` optional, verified local source range
 - `--source-ref` repeatable
 - `--model`
 - `--provenance key=value` repeatable for harness-specific safe fields
@@ -132,6 +133,49 @@ Never pass broad environment dumps, API keys, tokens, cookies, or secret-bearing
 session-env files. If a harness does not expose safe session identifiers, leave
 the fields blank and capture a source ref such as a local checkpoint path, git
 commit, or issue URL instead.
+
+### Verified Transcript Sections
+
+When the relevant physical lines are known, `--transcript-lines 1200-1250`
+alongside `--transcript-uri` records a one-based inclusive range, selected byte
+count and SHA-256. The source must be an existing absolute local path, `~/` path
+or `file:` URI. Paths resolve on this machine; no transcript upload or sync occurs.
+Only metadata is stored, not source text. No JSONL event schema is assumed.
+
+Before reading that section in a later session, verify its recorded hash:
+
+```bash
+agent-crystallize transcript-anchor \
+  --transcript-uri "/absolute/path/to/session.jsonl" \
+  --transcript-lines 1200-1250 \
+  --expect-sha256 "<recorded 64-character hex hash>"
+```
+
+This read-only command returns metadata without printing transcript content or
+writing artifacts. Omit `--expect-sha256` to inspect a range before capture.
+After verification, use a local viewer to read only that range, expanding nearby
+lines only if needed. Agents must choose meaningful sections; the CLI does not
+find the right conversation or automatically traverse source links.
+
+Hashing uses exact bytes, including LF/CRLF and any final newline. Appending later
+lines preserves earlier anchors; edits, inserted lines or newline conversion can
+invalidate them. Missing sources and mismatches are errors, not proof that the
+old claim was false. Re-locate and review, then append a correction pointer rather
+than silently rewriting old provenance. A hash proves byte agreement, not truth,
+identity, authorization or completeness. Even paths and fingerprints may be
+sensitive; review them before sharing artifacts.
+
+Bounds: at most 1000 selected lines / 256 KiB, 1 MiB per physical line and
+64 MiB of prefix scanning. Oversized selections and file changes detected during
+reading fail with an explicit diagnostic; this is not a locked source snapshot.
+The reader stops after the requested range; it does not
+load a whole transcript into memory. If a range is beyond the scan budget, retain
+ordinary source pointers or use a separately provenance-labelled source slice.
+
+Existing `--source-ref "transcript:lines=1200-1250"` remains supported as an
+unverified free-form hint. Older artifacts require no migration. Check CLI help
+before using new flags on older installations; do not invent ranges or hashes
+when the source cannot be inspected.
 
 ## Continuity Tail
 
