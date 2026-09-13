@@ -27,6 +27,11 @@ Artifact profiles control Git visibility, not cognitive authority:
 - `reviewed-shared` excludes `checkpoints/`, `manifest.json`, and `config.json`,
   while allowing reviewed `sessions/` artifacts to be committed deliberately.
 
+Generated `reviewed-shared` artifact bodies use repo-relative root pointers
+instead of automatically embedding the author's absolute checkout path. Values
+supplied explicitly in body, provenance, and source-ref fields are not assumed
+safe; review and sanitize them before committing.
+
 In public repositories, treat this default layout as a local working area unless
 the artifacts have been intentionally sanitized. This repo keeps generated
 `.agent-crystals/` ignored and publishes safe examples under `examples/`.

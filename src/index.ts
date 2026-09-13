@@ -379,6 +379,7 @@ function doctor(rest: string[]) {
 
 async function crystallize(rest: string[], kind: ArtifactKind) {
   const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
+  const artifactProfile = resolveArtifactProfile(repo);
   const budget = takeFlag(rest, "--budget") ?? (kind === "checkpoint" ? "fast" : "standard");
   const scope = takeFlag(rest, "--scope") ?? "project";
   const project = resolveProject(repo, takeFlag(rest, "--project"));
@@ -417,6 +418,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
 
   const observedAt = new Date();
   const git = collectGitContext(repo);
+  if (artifactProfile === "reviewed-shared" && git.root) git.root = ".";
   const checkpointTrail =
     kind === "crystal" && fromCheckpoints === "latest"
       ? collectCheckpointTrail(repo, checkpointDir ?? ".agent-crystals/checkpoints")
@@ -434,7 +436,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
     scope,
     project,
     budget,
-    repo,
+    repo: artifactProfile === "reviewed-shared" ? "." : repo,
     surface,
     observedAt,
     body,

@@ -20,6 +20,8 @@
   checkpoints.
 - Bootstrap, rollup, and recall prefer valid active artifacts.
 - Git evidence includes staged changes and uses bounded output.
+- `reviewed-shared` artifacts avoid automatically embedding absolute checkout
+  roots while retaining explicit provenance under user control.
 - New repo excludes cover agent-crystallize artifacts only. Existing broad
   legacy protections remain until explicit `init --migrate-excludes` review.
 

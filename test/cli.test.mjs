@@ -259,6 +259,10 @@ test("reviewed-shared keeps mechanical artifacts local and session crystals comm
 
   const checkpoint = json(run(["checkpoint", "--repo", repo, "--body", "Mechanical checkpoint fixture."]));
   const session = json(run(["now", "--repo", repo, "--body", "Reviewed session crystal fixture."]));
+  const sessionBody = readFileSync(session.path, "utf8");
+  assert.doesNotMatch(sessionBody, new RegExp(repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(sessionBody, /^- Repo: \.$/m);
+  assert.match(sessionBody, /^- Git root: \.$/m);
   const checkIgnored = (path) => spawnSync("git", ["-C", repo, "check-ignore", "-q", path], { encoding: "utf8" }).status;
   assert.equal(checkIgnored(checkpoint.path), 0);
   assert.equal(checkIgnored(join(repo, ".agent-crystals", "manifest.json")), 0);
