@@ -132,6 +132,31 @@ inside the repo-local Git exclude file.
 
 ## Recall Relevant Context
 
+### Update Awareness
+
+At session start or first skill use, optionally run:
+
+```bash
+agent-crystallize doctor --updates
+```
+
+Only this explicit flag contacts the public npm registry. It sends no repo,
+checkpoint, prompt, or session data. Requests time out after two seconds; results
+are cached under `~/.cache/agent-crystallize/updates.json` for 24 hours (one hour
+after failures). Offline or cache-write failures do not fail capture commands.
+Normal checkpoints and hooks never check the registry.
+
+Agents should ask about upgrading only when `updates.shouldNotify` is true.
+The hint is emitted once per installed/latest version pair, best-effort across
+concurrent processes. It means a hint was emitted, not that the user approved.
+Read release notes and verify install provenance before asking. Local candidates
+and unknown installs must not be replaced based on version metadata alone.
+No update is installed automatically. Older CLIs can reject this flag; continue
+working and suggest upgrading once. Generated instruction drift and npm version
+availability are separate checks.
+
+### Relevant Artifacts
+
 Use local recall when resuming, handing off, or beginning work where prior
 decisions may matter:
 

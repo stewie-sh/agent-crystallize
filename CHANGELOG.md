@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add opt-in `doctor --updates` with bounded npm checks, local cache, update hints,
+  and conservative handling of local or unknown install provenance. Never installs
+  updates automatically; skill and generated protocol include awareness guidance.
+
 ### Added
 
 - Bounded local `recall` with topic, file, session, date, and status filters.

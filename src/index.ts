@@ -16,6 +16,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkUpdates } from "./updates.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -326,11 +327,12 @@ async function init(rest: string[]) {
   };
 }
 
-function doctor(rest: string[]) {
+async function doctor(rest: string[]) {
   const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
   const codex = takeBooleanFlag(rest, "--codex");
   const claude = takeBooleanFlag(rest, "--claude");
   const hooks = takeBooleanFlag(rest, "--hooks");
+  const updates = takeBooleanFlag(rest, "--updates");
   if (rest.length > 0) throw new Error(`Unexpected doctor arguments: ${rest.join(" ")}`);
   if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
   const repoConfig = readRepoConfig(repo);
@@ -360,6 +362,10 @@ function doctor(rest: string[]) {
   return {
     ok: requiredFailed.length === 0,
     upgradeAvailable,
+    updates: updates ? await checkUpdates({
+      current: packageVersion(), source: installedSource(),
+      cachePath: resolve(homedir(), ".cache", "agent-crystallize", "updates.json"),
+    }) : undefined,
     repo,
     checks,
     nextActions:
@@ -1174,6 +1180,19 @@ function packageVersion() {
   return typeof parsed.version === "string" ? parsed.version : "unknown";
 }
 
+function installedSource(): "registry" | "local" | "unknown" {
+  if (existsSync(resolve(packageRoot(), ".git"))) return "local";
+  try {
+    const lock = JSON.parse(readFileSync(resolve(packageRoot(), "../../..", "package-lock.json"), "utf8"));
+    const resolved = lock.packages?.["node_modules/@stewie-sh/agent-crystallize"]?.resolved;
+    if (typeof resolved === "string") {
+      if (resolved.startsWith("https://registry.npmjs.org/")) return "registry";
+      return "local";
+    }
+  } catch { /* Install provenance is not always available. */ }
+  return "unknown";
+}
+
 function upsertManagedBlock(path: string, block: string, options: { dryRun: boolean; heading: string }): FileAction {
   const managed = `${managedStart}\n${block.trim()}\n${managedEnd}\n`;
   const exists = existsSync(path);
@@ -1450,6 +1469,7 @@ This file is a thin user-level pointer for local-first agent context persistence
 - Use checkpoints as lightweight save-points during long-running agent work.
 - Use fuller session crystals before handoff, compaction, or session end.
 - Use bounded local recall before resuming or acting on related work; inspect source artifacts before treating matches as truth.
+- At session start or first use, run \`agent-crystallize doctor --updates\` when supported. If updates.shouldNotify is true, review install provenance and ask the user before upgrading. This optional npm check is cached; never block urgent capture on it.
 - Prefer provenance pointers over copying large raw transcripts.
 - Keep private/local artifacts out of public repos unless they are intentionally sanitized.
 - Treat external memory systems as optional index/storage layers. The local artifact stays portable.
@@ -2512,6 +2532,7 @@ Init options:
   --mind                    Mark intent to connect an external memory layer later
 
 Doctor options:
+  --updates                 Check npm latest (2s timeout, 24h cache); suggest, never install
   --repo <path>             Repo to inspect; default cwd
   --codex                   Check ~/.codex/AGENTS.md managed pointer
   --claude                  Check ~/.claude/CLAUDE.md managed pointer

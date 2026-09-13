@@ -30,6 +30,14 @@ not silently enter the manifest or normal validation set.
 
 ## Workflow
 
+At session start or first skill use, run `agent-crystallize doctor --updates` when
+available. This opt-in check contacts npm with a two-second timeout and a shared
+24-hour cache (one hour after failure). Only ask about upgrading when
+`updates.shouldNotify` is true. Inspect installation provenance and release notes,
+then ask the user before upgrading. Local candidates need comparison by build/source,
+not version metadata alone. Offline checks must never delay an urgent checkpoint.
+Older CLIs may reject `--updates`; continue the task and suggest upgrading once.
+
 1. On resume, handoff, or when prior work may change the action, run bounded
    `agent-crystallize recall "<current task>" --trace`. Treat results as routing
    hints and inspect the source artifact before relying on it.

@@ -272,6 +272,7 @@ default CLI writes local files only.
 agent-crystallize setup [options]
 agent-crystallize init [options]
 agent-crystallize doctor [options]
+agent-crystallize doctor --updates  # Optional cached npm check; asks before upgrades
 agent-crystallize checkpoint [options] [summary]
 agent-crystallize now [options] [summary]
 agent-crystallize validate [options]
