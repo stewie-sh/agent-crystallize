@@ -40,8 +40,11 @@ checkpoint creation fails.
 
 ### PostCompact
 
-Write a compact-summary checkpoint only when a recent `PreCompact` checkpoint
-was not already recorded. Codex receives a compact-resume bootstrap directly.
+Write a compact-summary checkpoint when no recent `PreCompact` checkpoint was
+recorded. When one exists and the harness supplies a compact summary, preserve
+that later summary as a small delta linked to the richer PreCompact checkpoint
+instead of discarding it or duplicating the full state. Codex receives a
+compact-resume bootstrap directly.
 Claude Code treats `PostCompact` as a side-effect-only event: its documented
 `hookSpecificOutput` schema has no `PostCompact` `additionalContext` branch, so
 the command exits cleanly without emitting unsupported structured output.
@@ -130,13 +133,18 @@ durable truth. Disable it with `--no-continuity-tail` or adjust the budget with
 
 The hook runner keeps a small state file to avoid obvious duplication:
 
+- State is isolated by canonical Git root and safe hashed session id when the
+  harness supplies one. Updates are serialized with an exclusive local lock so
+  concurrent hook processes do not silently overwrite each other's state.
+
 - `SessionStart` shortens repeated bootstrap output when local pointers are
   unchanged inside the dedupe window.
 - `SessionStart` routes through the local manifest logic, so artifacts marked
   as superseded by newer crystals are not shown as primary resume pointers.
-- `PostCompact` skips writing a duplicate checkpoint when `PreCompact` already
-  wrote one recently. Codex can receive its bootstrap directly; Claude Code
-  receives it through the supported compact `SessionStart` path.
+- `PostCompact` skips a full duplicate when `PreCompact` already wrote one
+  recently; a supplied compact summary is retained as a bounded delta. Codex
+  can receive its bootstrap directly; Claude Code receives it through the
+  supported compact `SessionStart` path.
 - A successful compact `SessionStart` marks the bootstrap delivered, preventing
   a duplicate prompt-level fallback.
 - `UserPromptSubmit` prints the post-compact fallback at most once per

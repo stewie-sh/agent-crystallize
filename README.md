@@ -2,7 +2,7 @@
 
 Local-first checkpoints and crystals for long-running AI coding agent sessions.
 
-Status: public seed / first npm release.
+Status: public early release / active dogfooding.
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
@@ -87,6 +87,17 @@ Validate local crystals before relying on them for handoff:
 agent-crystallize validate
 ```
 
+Recall a bounded relevant slice when resuming work:
+
+```bash
+agent-crystallize recall "payment callback replay" --topic payments --trace
+```
+
+Recall is local lexical ranking. By default it excludes schema-invalid and
+superseded artifacts, returns at most five matches, and explains why each item
+matched. Results are routing hints: inspect the source artifact and current
+repo reality before acting.
+
 Default output:
 
 ```text
@@ -107,6 +118,17 @@ agent-crystallize setup --codex --skills
 agent-crystallize init
 agent-crystallize doctor
 ```
+
+After upgrading the npm package, detect stale generated protocol/skill files
+with `agent-crystallize doctor --codex --claude`. Review the reported drift,
+then update tool-managed copies with:
+
+```bash
+agent-crystallize setup --codex --claude --skills --upgrade
+```
+
+`--upgrade` preserves every replaced file as a timestamped inactive `.bak`.
+There is no install-time mutation of your home directory.
 
 Then create a first checkpoint:
 
@@ -250,6 +272,9 @@ default CLI writes local files only.
 agent-crystallize setup [options]
 agent-crystallize init [options]
 agent-crystallize doctor [options]
+agent-crystallize annotate --help
+agent-crystallize current-state --help
+agent-crystallize doctor --updates  # Optional cached npm check; asks before upgrades
 agent-crystallize checkpoint [options] [summary]
 agent-crystallize now [options] [summary]
 agent-crystallize validate [options]

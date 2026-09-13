@@ -11,7 +11,7 @@ agent-crystallize now \
   --agent-body codex \
   --harness codex-cli \
   --session-id example-session-123 \
-  --transcript-uri "file:///home/user/.codex/sessions/example.jsonl" \
+  --transcript-uri "~/.codex/sessions/example.jsonl" \
   --source-ref "transcript:lines=1200-1450" \
   --topic "parser" \
   --relation "depends_on:git commit abc123" \

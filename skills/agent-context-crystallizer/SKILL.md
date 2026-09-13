@@ -30,23 +30,42 @@ not silently enter the manifest or normal validation set.
 
 ## Workflow
 
-1. Inspect the local state that matters: `AGENTS.md`/`CLAUDE.md` if present,
+At a stable milestone, use `current-state --help` to create a topic-scoped
+synthesis from explicitly selected valid active artifacts. Supply the synthesis,
+reason and provenance; the CLI records derived_from links and consolidation.
+Use `annotate` for explained lifecycle changes. Archive is reversible visibility,
+consolidation is not supersession, and age alone does not establish staleness.
+Recall hides archived/consolidated sources by default; `--include-inactive`
+restores audit visibility. Inspect manifest lifecycleIssues before trusting its map.
+
+At session start or first skill use, run `agent-crystallize doctor --updates` when
+available. This opt-in check contacts npm with a two-second timeout and a shared
+24-hour cache (one hour after failure). Only ask about upgrading when
+`updates.shouldNotify` is true. Inspect installation provenance and release notes,
+then ask the user before upgrading. Local candidates need comparison by build/source,
+not version metadata alone. Offline checks must never delay an urgent checkpoint.
+Older CLIs may reject `--updates`; continue the task and suggest upgrading once.
+
+1. On resume, handoff, or when prior work may change the action, run bounded
+   `agent-crystallize recall "<current task>" --trace`. Treat results as routing
+   hints and inspect the source artifact before relying on it.
+2. Inspect the local state that matters: `AGENTS.md`/`CLAUDE.md` if present,
    `git status --short`, relevant changed files, recent test/build/deploy
    results, and existing `.agent-crystals/manifest.json` when present.
-2. Choose the lightest useful artifact:
+3. Choose the lightest useful artifact:
    - checkpoint: during active work, before risky edits, before compaction, or
      after a high-signal decision/finding/failure;
    - session crystal: before handoff/session end, or to roll up recent
      checkpoints.
-3. Prefer structured flags over vague prose: `--decision`, `--finding`,
+4. Prefer structured flags over vague prose: `--decision`, `--finding`,
    `--open-loop`, `--test`, `--next-action`, `--evidence`,
    `--memory-candidate`, `--topic`, and `--relation type:target`.
-4. Add safe provenance when available: `--agent-body`, `--harness`,
+5. Add safe provenance when available: `--agent-body`, `--harness`,
    `--session-id`, `--transcript-uri`, and `--source-ref`. Never dump broad
    environment variables or secrets.
-5. Use `--continuity-tail` only for short recent turns where order/nuance
+6. Use `--continuity-tail` only for short recent turns where order/nuance
    matters after compaction. It is raw continuity evidence, not durable truth.
-6. Validate important artifacts before relying on them.
+7. Validate important artifacts before relying on them.
 
 ## Commands
 
@@ -80,6 +99,15 @@ Hook/continuity check:
 ```bash
 agent-crystallize doctor --codex --claude --hooks
 ```
+
+Bounded local recall:
+
+```bash
+agent-crystallize recall "<current task>" --topic "<optional-topic>" --trace
+```
+
+Recall excludes invalid and superseded artifacts by default. It is local lexical
+ranking, not a claim that the highest-scored artifact is current truth.
 
 ## Guardrails
 

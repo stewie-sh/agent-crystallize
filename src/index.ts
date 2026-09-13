@@ -1,10 +1,23 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, fstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkUpdates } from "./updates.js";
+import { actions, applyAnnotations, writeAnnotation, withLifecycleLock, fingerprint, type Action } from "./lifecycle.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -65,6 +78,12 @@ async function run(name: string | undefined, rest: string[]) {
       return validate(rest);
     case "manifest":
       return manifest(rest);
+    case "recall":
+      return recall(rest);
+    case "annotate":
+      return annotate(rest);
+    case "current-state":
+      return currentState(rest);
     case "hook":
       return hook(rest);
     case "setup":
@@ -95,6 +114,7 @@ interface HookState {
 
 interface HookProjectState {
   cwd: string;
+  sessionKey?: string;
   lastActivityAt?: string;
   lastActivityEvent?: string;
   lastCheckpointAt?: string;
@@ -106,6 +126,7 @@ interface HookProjectState {
   lastInjectedContextAt?: string;
   lastInjectedContextEvent?: string;
   lastPostCompactAt?: string;
+  lastPostCompactContentHash?: string;
   lastPostCompactPromptBootstrapAt?: string;
 }
 
@@ -125,6 +146,20 @@ interface ArtifactRecord {
     warnings: string[];
   };
   supersededBy: string[];
+  archived: boolean;
+  consolidatedInto: string[];
+  annotations: Array<{ id: string; action: string; reason: string; source: string; at: string; target?: string }>;
+  lifecycleIssues: string[];
+}
+
+interface RecallResult {
+  path: string;
+  kind: ArtifactRecord["kind"];
+  title: string;
+  observedAt?: string;
+  score: number;
+  matched: string[];
+  snippet: string;
 }
 
 interface FileAction {
@@ -142,6 +177,7 @@ interface RepoConfig {
 function setup(rest: string[]) {
   const dryRun = takeBooleanFlag(rest, "--dry-run");
   const force = takeBooleanFlag(rest, "--force");
+  const upgrade = takeBooleanFlag(rest, "--upgrade");
   const all = takeBooleanFlag(rest, "--all");
   const codex = all || takeBooleanFlag(rest, "--codex");
   const claude = all || takeBooleanFlag(rest, "--claude");
@@ -151,7 +187,7 @@ function setup(rest: string[]) {
   if (rest.length > 0) throw new Error(`Unexpected setup arguments: ${rest.join(" ")}`);
 
   const actions: FileAction[] = [];
-  actions.push(writeIfChanged(protocolPath, renderProtocolFile(), { dryRun, force }));
+  actions.push(writeIfChanged(protocolPath, renderProtocolFile(), { dryRun, force: force || upgrade, backupOnReplace: upgrade }));
   if (codex) {
     actions.push(
       upsertManagedBlock(resolve(homedir(), ".codex", "AGENTS.md"), renderHarnessPointer("Codex"), {
@@ -171,8 +207,8 @@ function setup(rest: string[]) {
   if (skills) {
     const installCodexSkill = codex || all || (!codex && !claude);
     const installClaudeSkill = claude || all || (!codex && !claude);
-    if (installCodexSkill) actions.push(...installSkill(resolve(homedir(), ".codex", "skills", "agent-context-crystallizer"), { dryRun, force }));
-    if (installClaudeSkill) actions.push(...installSkill(resolve(homedir(), ".claude", "skills", "agent-context-crystallizer"), { dryRun, force }));
+    if (installCodexSkill) actions.push(...installSkill(resolve(homedir(), ".codex", "skills", "agent-context-crystallizer"), { dryRun, force: force || upgrade, backupOnReplace: upgrade }));
+    if (installClaudeSkill) actions.push(...installSkill(resolve(homedir(), ".claude", "skills", "agent-context-crystallizer"), { dryRun, force: force || upgrade, backupOnReplace: upgrade }));
   }
   if (hooks) {
     actions.push({
@@ -208,12 +244,13 @@ function setup(rest: string[]) {
 }
 
 async function init(rest: string[]) {
-  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
   const project = resolveProject(repo, takeFlag(rest, "--project"));
   const artifactProfile = resolveArtifactProfile(repo, takeFlag(rest, "--artifact-profile"));
   const dryRun = takeBooleanFlag(rest, "--dry-run");
   const noCheckpoint = takeBooleanFlag(rest, "--no-checkpoint");
   const noAgentsMd = takeBooleanFlag(rest, "--no-agents-md");
+  const migrateExcludes = takeBooleanFlag(rest, "--migrate-excludes");
   const hooks = takeBooleanFlag(rest, "--hooks");
   const mind = takeBooleanFlag(rest, "--mind");
   if (rest.length > 0) throw new Error(`Unexpected init arguments: ${rest.join(" ")}`);
@@ -224,7 +261,7 @@ async function init(rest: string[]) {
   actions.push(ensureDirectory(resolve(repo, ".agent-crystals", "checkpoints"), dryRun));
   actions.push(ensureDirectory(resolve(repo, ".agent-crystals", "sessions"), dryRun));
   actions.push(upsertRepoConfig(repo, project, artifactProfile, dryRun));
-  actions.push(upsertLocalExclude(repo, artifactProfile, dryRun));
+  actions.push(upsertLocalExclude(repo, artifactProfile, dryRun, migrateExcludes));
   if (!noAgentsMd) {
     actions.push(
       upsertManagedBlock(resolve(repo, "AGENTS.md"), renderRepoPointer(project), {
@@ -299,11 +336,12 @@ async function init(rest: string[]) {
   };
 }
 
-function doctor(rest: string[]) {
-  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+async function doctor(rest: string[]) {
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
   const codex = takeBooleanFlag(rest, "--codex");
   const claude = takeBooleanFlag(rest, "--claude");
   const hooks = takeBooleanFlag(rest, "--hooks");
+  const updates = takeBooleanFlag(rest, "--updates");
   if (rest.length > 0) throw new Error(`Unexpected doctor arguments: ${rest.join(" ")}`);
   if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
   const repoConfig = readRepoConfig(repo);
@@ -317,18 +355,32 @@ function doctor(rest: string[]) {
     checkPath("repo:.agent-crystals/manifest.json", resolve(repo, ".agent-crystals", "manifest.json"), false),
     checkPath("repo:AGENTS.md", resolve(repo, "AGENTS.md"), false),
     checkLocalExclude(repo, repoConfig?.artifactProfile ?? "local-private"),
-    checkPath("global:protocol", resolve(homedir(), ".agents", "context-persistence-protocol.md"), false),
+    checkGeneratedFile("global:protocol", resolve(homedir(), ".agents", "context-persistence-protocol.md"), renderProtocolFile()),
   ];
-  if (codex) checks.push(checkManagedPointer("global:codex", resolve(homedir(), ".codex", "AGENTS.md")));
-  if (claude) checks.push(checkManagedPointer("global:claude", resolve(homedir(), ".claude", "CLAUDE.md")));
+  if (codex) {
+    checks.push(checkManagedPointer("global:codex", resolve(homedir(), ".codex", "AGENTS.md")));
+    checks.push(...checkInstalledSkill("global:codex-skill", resolve(homedir(), ".codex", "skills", "agent-context-crystallizer")));
+  }
+  if (claude) {
+    checks.push(checkManagedPointer("global:claude", resolve(homedir(), ".claude", "CLAUDE.md")));
+    checks.push(...checkInstalledSkill("global:claude-skill", resolve(homedir(), ".claude", "skills", "agent-context-crystallizer")));
+  }
   if (hooks) checks.push(...checkHookConfig());
   const requiredFailed = checks.filter((check) => check.required && check.status !== "ok");
+  const upgradeAvailable = checks.some((check) => check.status === "outdated_or_modified");
   return {
     ok: requiredFailed.length === 0,
+    upgradeAvailable,
+    updates: updates ? await checkUpdates({
+      current: packageVersion(), source: installedSource(),
+      cachePath: resolve(homedir(), ".cache", "agent-crystallize", "updates.json"),
+    }) : undefined,
     repo,
     checks,
     nextActions:
-      requiredFailed.length === 0
+      upgradeAvailable
+        ? ["Review differences, then run agent-crystallize setup --upgrade with the same --codex/--claude/--skills targets. Previous generated files are backed up before replacement."]
+        : requiredFailed.length === 0
         ? hooks
           ? [
               "Codex: open /hooks after installing or changing hooks, then review and trust changed hook definitions.",
@@ -336,12 +388,13 @@ function doctor(rest: string[]) {
               "If hook trust is unknown, keep using manual agent-crystallize checkpoint/now before compaction or handoff.",
             ]
           : ["Use agent-crystallize checkpoint during long work and agent-crystallize now before handoff or compaction."]
-        : ["Run agent-crystallize init in this repo.", "Run agent-crystallize setup --codex or --claude for harness-global pointers."],
+        : ["Run agent-crystallize init in this repo; preserve custom global instructions and pointers."],
   };
 }
 
 async function crystallize(rest: string[], kind: ArtifactKind) {
-  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
+  const artifactProfile = resolveArtifactProfile(repo);
   const budget = takeFlag(rest, "--budget") ?? (kind === "checkpoint" ? "fast" : "standard");
   const scope = takeFlag(rest, "--scope") ?? "project";
   const project = resolveProject(repo, takeFlag(rest, "--project"));
@@ -359,6 +412,10 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   const continuityTailSource = takeFlag(rest, "--continuity-tail-source") ?? "cli";
   const structured = takeStructuredFields(rest, continuityTailSource);
   const outDir = resolve(repo, takeFlag(rest, "--out-dir") ?? (kind === "checkpoint" ? ".agent-crystals/checkpoints" : ".agent-crystals/sessions"));
+  const unknownFlags = rest.filter((value) => value.startsWith("--"));
+  if (unknownFlags.length > 0) {
+    throw new Error(`Unexpected ${kind} arguments: ${unknownFlags.join(" ")}`);
+  }
   const body = bodyFlag ?? (readStdin ? await readStdinBody() : rest.join(" ").trim());
 
   if (!existsSync(repo)) throw new Error(`Repo path does not exist: ${repo}`);
@@ -376,6 +433,7 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
 
   const observedAt = new Date();
   const git = collectGitContext(repo);
+  if (artifactProfile === "reviewed-shared" && git.root) git.root = ".";
   const checkpointTrail =
     kind === "crystal" && fromCheckpoints === "latest"
       ? collectCheckpointTrail(repo, checkpointDir ?? ".agent-crystals/checkpoints")
@@ -385,15 +443,15 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
   );
   const filename = `${compactTimestamp(observedAt)}-${slugify(title)}.md`;
   mkdirSync(outDir, { recursive: true });
-  const path = resolve(outDir, filename);
-  const relativePath = relative(repo, path);
+  const path = reserveExclusiveArtifactPath(outDir, filename);
+  const finalRelativePath = relative(repo, path);
   const markdown = renderCrystal({
     kind,
     title,
     scope,
     project,
     budget,
-    repo,
+    repo: artifactProfile === "reviewed-shared" ? "." : repo,
     surface,
     observedAt,
     body,
@@ -401,14 +459,14 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
     git,
     checkpointTrail,
     instructionFiles,
-    outputRelativePath: relativePath,
+    outputRelativePath: finalRelativePath,
   });
   writeFileSync(path, markdown, "utf8");
 
   const result: Record<string, unknown> = {
     ok: true,
     path,
-    relativePath,
+    relativePath: finalRelativePath,
     repo,
     project,
     scope,
@@ -422,8 +480,8 @@ async function crystallize(rest: string[], kind: ArtifactKind) {
 }
 
 async function hook(rest: string[]) {
-  const input = readJsonStdinIfAvailable();
-  const repo = resolve(takeFlag(rest, "--repo") ?? stringField(input, "cwd") ?? process.cwd());
+  const input = await readJsonStdinIfAvailable();
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? stringField(input, "cwd") ?? process.cwd());
   const harness = takeFlag(rest, "--harness") ?? stringField(input, "harness") ?? "hook";
   const event = (takeFlag(rest, "--event") ?? stringField(input, "hook_event_name") ?? stringField(input, "event") ?? "SessionStart") as HookEvent;
   const stateDir = resolve(takeFlag(rest, "--state-dir") ?? join(homedir(), ".agent-crystallize", "hooks"));
@@ -448,70 +506,173 @@ async function hook(rest: string[]) {
   const continuityTail = noContinuityTail ? [] : extractContinuityTailFromHookInput(input, continuityTailMaxChars);
 
   const statePath = join(stateDir, "state.json");
-  const state = loadHookState(statePath);
-  const key = stableKey(repo);
-  const projectState = state.projects[key] ?? { cwd: repo };
-  projectState.cwd = repo;
+  return withStateLock(statePath, async () => {
+    const state = loadHookState(statePath);
+    const sessionId = stringField(input, "session_id") ?? stringField(input, "sessionId");
+    const sessionKey = sessionId ? stableKey(sessionId) : "session-unavailable";
+    const key = sessionId ? stableKey(`${repo}\n${sessionId}`) : stableKey(repo);
+    const projectState = state.projects[key] ?? { cwd: repo, sessionKey };
+    projectState.cwd = repo;
+    projectState.sessionKey = sessionKey;
 
-  const save = () => {
-    state.projects[key] = projectState;
-    saveHookState(statePath, state);
-  };
+    const save = () => {
+      state.projects[key] = projectState;
+      saveHookState(statePath, state);
+    };
 
-  switch (event) {
-    case "SessionStart": {
-      const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs);
-      const fullContextHash = stableKey(context.fullContext);
-      const injectedAt = new Date().toISOString();
-      projectState.lastSessionStartAt = injectedAt;
-      projectState.lastInjectedContextHash = fullContextHash;
-      projectState.lastInjectedContextAt = injectedAt;
-      projectState.lastInjectedContextEvent = event;
-      const lastPostCompact = projectState.lastPostCompactAt ? Date.parse(projectState.lastPostCompactAt) : 0;
-      if (lastPostCompact > 0 && Date.parse(injectedAt) >= lastPostCompact) {
-        projectState.lastPostCompactPromptBootstrapAt = injectedAt;
-      }
-      save();
-      outputHookContext(harness, event, context.output);
-      return undefined;
-    }
-    case "UserPromptSubmit": {
-      projectState.lastActivityAt = new Date().toISOString();
-      projectState.lastActivityEvent = event;
-      const lastPostCompact = projectState.lastPostCompactAt ? Date.parse(projectState.lastPostCompactAt) : 0;
-      const lastPromptBootstrap = projectState.lastPostCompactPromptBootstrapAt
-        ? Date.parse(projectState.lastPostCompactPromptBootstrapAt)
-        : 0;
-      if (lastPostCompact > lastPromptBootstrap) {
-        const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
-        projectState.lastInjectedContextHash = stableKey(context);
-        projectState.lastInjectedContextAt = new Date().toISOString();
+    switch (event) {
+      case "SessionStart": {
+        const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs);
+        const fullContextHash = stableKey(context.fullContext);
+        const injectedAt = new Date().toISOString();
+        projectState.lastSessionStartAt = injectedAt;
+        projectState.lastInjectedContextHash = fullContextHash;
+        projectState.lastInjectedContextAt = injectedAt;
         projectState.lastInjectedContextEvent = event;
-        projectState.lastPostCompactPromptBootstrapAt = projectState.lastInjectedContextAt;
+        const lastPostCompact = projectState.lastPostCompactAt ? Date.parse(projectState.lastPostCompactAt) : 0;
+        if (lastPostCompact > 0 && Date.parse(injectedAt) >= lastPostCompact) {
+          projectState.lastPostCompactPromptBootstrapAt = injectedAt;
+        }
         save();
-        outputHookContext(
-          harness,
-          event,
-          [
-            "agent-crystallize post-compact bootstrap fallback:",
-            "A PostCompact hook ran since the last prompt-level compact bootstrap.",
-            context,
-          ].join("\n"),
-        );
+        outputHookContext(harness, event, context.output);
         return undefined;
       }
-      save();
-      return undefined;
-    }
-    case "PostToolUse":
-    case "PostToolBatch": {
-      projectState.lastActivityAt = new Date().toISOString();
-      projectState.lastActivityEvent = event;
-      save();
-      return undefined;
-    }
-    case "PreCompact": {
-      try {
+      case "UserPromptSubmit": {
+        projectState.lastActivityAt = new Date().toISOString();
+        projectState.lastActivityEvent = event;
+        const lastPostCompact = projectState.lastPostCompactAt ? Date.parse(projectState.lastPostCompactAt) : 0;
+        const lastPromptBootstrap = projectState.lastPostCompactPromptBootstrapAt
+          ? Date.parse(projectState.lastPostCompactPromptBootstrapAt)
+          : 0;
+        if (lastPostCompact > lastPromptBootstrap) {
+          const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
+          projectState.lastInjectedContextHash = stableKey(context);
+          projectState.lastInjectedContextAt = new Date().toISOString();
+          projectState.lastInjectedContextEvent = event;
+          projectState.lastPostCompactPromptBootstrapAt = projectState.lastInjectedContextAt;
+          save();
+          outputHookContext(
+            harness,
+            event,
+            [
+              "agent-crystallize post-compact bootstrap fallback:",
+              "A PostCompact hook ran since the last prompt-level compact bootstrap.",
+              context,
+            ].join("\n"),
+          );
+          return undefined;
+        }
+        save();
+        return undefined;
+      }
+      case "PostToolUse":
+      case "PostToolBatch": {
+        projectState.lastActivityAt = new Date().toISOString();
+        projectState.lastActivityEvent = event;
+        save();
+        return undefined;
+      }
+      case "PreCompact": {
+        try {
+          const checkpoint = await createHookCheckpoint({
+            repo,
+            harness,
+            event,
+            input,
+            includeTranscriptUri,
+            continuityTail,
+            continuityTailMaxChars,
+            body: [
+              "Pre-compact checkpoint requested by lifecycle hook.",
+              `Trigger: ${redactSensitiveText(stringField(input, "trigger") ?? "unknown")}.`,
+              stringField(input, "custom_instructions")
+                ? `Custom compact instructions: ${excerpt(redactSensitiveText(stringField(input, "custom_instructions") ?? ""), 1000)}.`
+                : undefined,
+              `Last activity: ${projectState.lastActivityAt ?? "unknown"}.`,
+              "Purpose: preserve high-signal work state before lossy context compaction.",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+            decision: "PreCompact is a lifecycle boundary; write a local checkpoint before compaction proceeds.",
+            finding: "Hook-created checkpoints are local-first artifacts and do not require any external memory service.",
+            openLoop: "After compaction, resume from the latest local checkpoint or session crystal before acting.",
+            nextAction: "Read the latest checkpoint under .agent-crystals/checkpoints/ after compaction.",
+          });
+          projectState.lastCheckpointAt = new Date().toISOString();
+          projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
+          projectState.lastCheckpointEvent = event;
+          projectState.lastPreCompactAt = projectState.lastCheckpointAt;
+          save();
+        } catch (error) {
+          save();
+          if (strictPrecompact) {
+            throw error;
+          }
+          process.stderr.write(`agent-crystallize hook PreCompact checkpoint failed: ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+        return undefined;
+      }
+    case "PostCompact": {
+      const now = new Date().toISOString();
+      const compactSummary = redactSensitiveText(stringField(input, "compact_summary") ?? "");
+      const postCompactContentHash = stableKey(`${normalizeForHash(compactSummary)}\n${JSON.stringify(continuityTail)}`);
+      const lastPostCompact = projectState.lastPostCompactAt ? Date.parse(projectState.lastPostCompactAt) : 0;
+      const repeatedPostCompact =
+        projectState.lastPostCompactContentHash === postCompactContentHash &&
+        lastPostCompact > 0 &&
+        Date.now() - lastPostCompact <= dedupeWindowMs;
+      const lastPreCompact = projectState.lastPreCompactAt ? Date.parse(projectState.lastPreCompactAt) : 0;
+      if (lastPreCompact > 0 && Date.now() - lastPreCompact <= dedupeWindowMs) {
+        if (compactSummary && !repeatedPostCompact) {
+            const checkpoint = await createHookCheckpoint({
+              repo,
+              harness,
+              event,
+              input,
+              includeTranscriptUri,
+              continuityTail,
+              continuityTailMaxChars,
+              body: [
+                "Post-compact summary delta captured after a recent PreCompact checkpoint.",
+                `Trigger: ${redactSensitiveText(stringField(input, "trigger") ?? "unknown")}.`,
+                `Compact summary: ${excerpt(compactSummary, 2000)}`,
+              ].join("\n"),
+              decision: "Preserve a supplied PostCompact summary as append-only evidence instead of silently discarding it.",
+              finding: "A recent PreCompact checkpoint exists; this artifact records only the later compact-summary delta.",
+              openLoop: "Verify the richer PreCompact checkpoint before treating this lossy summary as authoritative.",
+              nextAction: "Resume from the recent PreCompact checkpoint, using this delta only for post-compact context.",
+              relation: projectState.lastCheckpointPath ? `relates_to:${projectState.lastCheckpointPath}` : undefined,
+            });
+            projectState.lastCheckpointAt = now;
+            projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
+            projectState.lastCheckpointEvent = event;
+          }
+          const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
+          projectState.lastActivityAt = now;
+        projectState.lastActivityEvent = event;
+        projectState.lastPostCompactAt = now;
+        projectState.lastPostCompactContentHash = postCompactContentHash;
+          if (canInjectHookContext(harness, event)) {
+            projectState.lastInjectedContextHash = stableKey(context);
+            projectState.lastInjectedContextAt = now;
+            projectState.lastInjectedContextEvent = event;
+          }
+          save();
+          outputHookContext(
+            harness,
+            event,
+            [
+              "agent-crystallize post-compact bootstrap:",
+            compactSummary
+              ? repeatedPostCompact
+                ? "The same PostCompact summary was already preserved recently, so no duplicate delta was written."
+                : "A recent PreCompact checkpoint exists; the supplied compact summary was preserved as a bounded delta checkpoint."
+                : "A recent PreCompact checkpoint already exists, so no duplicate checkpoint was written.",
+              context,
+            ].join("\n"),
+          );
+          return undefined;
+        }
         const checkpoint = await createHookCheckpoint({
           repo,
           harness,
@@ -521,46 +682,24 @@ async function hook(rest: string[]) {
           continuityTail,
           continuityTailMaxChars,
           body: [
-            "Pre-compact checkpoint requested by lifecycle hook.",
-            `Trigger: ${stringField(input, "trigger") ?? "unknown"}.`,
-            stringField(input, "custom_instructions")
-              ? `Custom compact instructions: ${excerpt(stringField(input, "custom_instructions") ?? "", 1000)}.`
-              : undefined,
-            `Last activity: ${projectState.lastActivityAt ?? "unknown"}.`,
-            "Purpose: preserve high-signal work state before lossy context compaction.",
-          ]
-            .filter(Boolean)
-            .join("\n"),
-          decision: "PreCompact is a lifecycle boundary; write a local checkpoint before compaction proceeds.",
-          finding: "Hook-created checkpoints are local-first artifacts and do not require any external memory service.",
-          openLoop: "After compaction, resume from the latest local checkpoint or session crystal before acting.",
-          nextAction: "Read the latest checkpoint under .agent-crystals/checkpoints/ after compaction.",
+            "Post-compact summary captured by lifecycle hook.",
+            `Trigger: ${redactSensitiveText(stringField(input, "trigger") ?? "unknown")}.`,
+            compactSummary ? `Compact summary: ${excerpt(compactSummary, 2000)}` : "No compact_summary field was supplied.",
+          ].join("\n"),
+          decision: "PostCompact summaries are evidence, not the sole source of truth.",
+          finding: "No recent PreCompact checkpoint was recorded, so PostCompact wrote a local checkpoint.",
+          openLoop: "Verify whether important decisions survived compaction before continuing.",
+          nextAction: "Read the PostCompact checkpoint and inspect changed files before acting.",
         });
         projectState.lastCheckpointAt = new Date().toISOString();
         projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
-        projectState.lastCheckpointEvent = event;
-        projectState.lastPreCompactAt = projectState.lastCheckpointAt;
-        save();
-      } catch (error) {
-        save();
-        if (strictPrecompact) {
-          throw error;
-        }
-        process.stderr.write(`agent-crystallize hook PreCompact checkpoint failed: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
-      return undefined;
-    }
-    case "PostCompact": {
-      const now = new Date().toISOString();
-      const lastPreCompact = projectState.lastPreCompactAt ? Date.parse(projectState.lastPreCompactAt) : 0;
-      if (lastPreCompact > 0 && Date.now() - lastPreCompact <= dedupeWindowMs) {
+      projectState.lastCheckpointEvent = event;
+      projectState.lastPostCompactAt = projectState.lastCheckpointAt;
+      projectState.lastPostCompactContentHash = postCompactContentHash;
         const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
-        projectState.lastActivityAt = now;
-        projectState.lastActivityEvent = event;
-        projectState.lastPostCompactAt = now;
         if (canInjectHookContext(harness, event)) {
           projectState.lastInjectedContextHash = stableKey(context);
-          projectState.lastInjectedContextAt = now;
+          projectState.lastInjectedContextAt = projectState.lastCheckpointAt;
           projectState.lastInjectedContextEvent = event;
         }
         save();
@@ -569,87 +708,47 @@ async function hook(rest: string[]) {
           event,
           [
             "agent-crystallize post-compact bootstrap:",
-            "A recent PreCompact checkpoint already exists, so no duplicate checkpoint was written.",
+            "A PostCompact checkpoint was written because no recent PreCompact checkpoint was found.",
             context,
           ].join("\n"),
         );
         return undefined;
       }
-      const compactSummary = stringField(input, "compact_summary") ?? "";
-      const checkpoint = await createHookCheckpoint({
-        repo,
-        harness,
-        event,
-        input,
-        includeTranscriptUri,
-        continuityTail,
-        continuityTailMaxChars,
-        body: [
-          "Post-compact summary captured by lifecycle hook.",
-          `Trigger: ${stringField(input, "trigger") ?? "unknown"}.`,
-          compactSummary ? `Compact summary: ${excerpt(compactSummary, 2000)}` : "No compact_summary field was supplied.",
-        ].join("\n"),
-        decision: "PostCompact summaries are evidence, not the sole source of truth.",
-        finding: "No recent PreCompact checkpoint was recorded, so PostCompact wrote a local checkpoint.",
-        openLoop: "Verify whether important decisions survived compaction before continuing.",
-        nextAction: "Read the PostCompact checkpoint and inspect changed files before acting.",
-      });
-      projectState.lastCheckpointAt = new Date().toISOString();
-      projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
-      projectState.lastCheckpointEvent = event;
-      projectState.lastPostCompactAt = projectState.lastCheckpointAt;
-      const context = renderSessionStartContext(repo, harness, projectState, maxPointers, dedupeWindowMs).fullContext;
-      if (canInjectHookContext(harness, event)) {
-        projectState.lastInjectedContextHash = stableKey(context);
-        projectState.lastInjectedContextAt = projectState.lastCheckpointAt;
-        projectState.lastInjectedContextEvent = event;
+      case "Stop": {
+        const lastActivity = projectState.lastActivityAt ? Date.parse(projectState.lastActivityAt) : 0;
+        const lastCheckpoint = projectState.lastCheckpointAt ? Date.parse(projectState.lastCheckpointAt) : 0;
+        if (lastActivity > lastCheckpoint && Date.now() - lastCheckpoint >= stopCheckpointMs) {
+          const checkpoint = await createHookCheckpoint({
+            repo,
+            harness,
+            event,
+            input,
+            includeTranscriptUri,
+            continuityTail,
+            continuityTailMaxChars,
+            body: [
+              "Stop hook created a cadence checkpoint after sustained uncheckpointed activity.",
+              `Last activity: ${projectState.lastActivityAt ?? "unknown"}.`,
+              `Last activity event: ${projectState.lastActivityEvent ?? "unknown"}.`,
+              "This checkpoint is a fallback, not a substitute for explicit high-signal crystallization.",
+            ].join("\n"),
+            decision: "Stop hooks should checkpoint only as a cadence fallback.",
+            finding: "There was activity after the latest checkpoint and the checkpoint interval elapsed.",
+            openLoop: "Review whether this fallback checkpoint needs a richer session crystal.",
+            nextAction: "If ending the task, create a fuller session crystal with agent-crystallize now.",
+          });
+          projectState.lastCheckpointAt = new Date().toISOString();
+          projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
+          projectState.lastCheckpointEvent = event;
+        }
+        save();
+        return undefined;
       }
-      save();
-      outputHookContext(
-        harness,
-        event,
-        [
-          "agent-crystallize post-compact bootstrap:",
-          "A PostCompact checkpoint was written because no recent PreCompact checkpoint was found.",
-          context,
-        ].join("\n"),
-      );
-      return undefined;
+      default:
+        save();
+        return undefined;
     }
-    case "Stop": {
-      const lastActivity = projectState.lastActivityAt ? Date.parse(projectState.lastActivityAt) : 0;
-      const lastCheckpoint = projectState.lastCheckpointAt ? Date.parse(projectState.lastCheckpointAt) : 0;
-      if (lastActivity > lastCheckpoint && Date.now() - lastCheckpoint >= stopCheckpointMs) {
-        const checkpoint = await createHookCheckpoint({
-          repo,
-          harness,
-          event,
-          input,
-          includeTranscriptUri,
-          continuityTail,
-          continuityTailMaxChars,
-          body: [
-            "Stop hook created a cadence checkpoint after sustained uncheckpointed activity.",
-            `Last activity: ${projectState.lastActivityAt ?? "unknown"}.`,
-            `Last activity event: ${projectState.lastActivityEvent ?? "unknown"}.`,
-            "This checkpoint is a fallback, not a substitute for explicit high-signal crystallization.",
-          ].join("\n"),
-          decision: "Stop hooks should checkpoint only as a cadence fallback.",
-          finding: "There was activity after the latest checkpoint and the checkpoint interval elapsed.",
-          openLoop: "Review whether this fallback checkpoint needs a richer session crystal.",
-          nextAction: "If ending the task, create a fuller session crystal with agent-crystallize now.",
-        });
-        projectState.lastCheckpointAt = new Date().toISOString();
-        projectState.lastCheckpointPath = stringRecordField(checkpoint, "relativePath");
-        projectState.lastCheckpointEvent = event;
-      }
-      save();
-      return undefined;
-    }
-    default:
-      save();
-      return undefined;
-  }
+  });
 }
 
 async function createHookCheckpoint(input: {
@@ -665,6 +764,7 @@ async function createHookCheckpoint(input: {
   finding: string;
   openLoop: string;
   nextAction: string;
+  relation?: string;
 }) {
   const project = resolveProject(input.repo);
   const args = [
@@ -705,6 +805,7 @@ async function createHookCheckpoint(input: {
     "--memory-candidate",
     "Lifecycle hooks should reduce human checkpointing burden while keeping generated artifacts local-first.",
   ];
+  if (input.relation) args.push("--relation", input.relation);
   const sessionId = stringField(input.input, "session_id") ?? stringField(input.input, "sessionId");
   if (sessionId) args.push("--session-id", sessionId);
   const transcriptUri = stringField(input.input, "transcript_path") ?? stringField(input.input, "transcriptUri");
@@ -721,16 +822,26 @@ async function createHookCheckpoint(input: {
   return crystallize(args, "checkpoint");
 }
 
-function readJsonStdinIfAvailable(): Record<string, unknown> {
+async function readJsonStdinIfAvailable(): Promise<Record<string, unknown>> {
+  if (process.stdin.isTTY) return {};
+  const chunks: Buffer[] = [];
   try {
-    const stat = fstatSync(0);
-    if (!stat.isFIFO() && !stat.isFile()) return {};
-    const raw = readFileSync(0, "utf8").trim();
-    if (!raw) return {};
+    for await (const chunk of process.stdin) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+  } catch (error) {
+    throw new Error(`Unable to read hook JSON from stdin: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) return {};
+  try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("expected a JSON object");
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(`Invalid hook JSON on stdin: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -783,11 +894,51 @@ function loadHookState(path: string): HookState {
   }
 }
 
+async function withStateLock<T>(statePath: string, action: () => Promise<T>): Promise<T> {
+  mkdirSync(dirname(statePath), { recursive: true });
+  const lockPath = `${statePath}.lock`;
+  const owner = `${process.pid}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  const deadline = Date.now() + 5000;
+
+  while (true) {
+    try {
+      const fd = openSync(lockPath, "wx");
+      writeFileSync(fd, `${owner}\n`, "utf8");
+      closeSync(fd);
+      break;
+    } catch (error) {
+      if (!isNodeError(error, "EEXIST")) throw error;
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for hook state lock: ${lockPath}`);
+      }
+      await delay(20);
+    }
+  }
+
+  try {
+    return await action();
+  } finally {
+    try {
+      if (readFileSync(lockPath, "utf8").trim() === owner) unlinkSync(lockPath);
+    } catch {
+      // A missing lock is observable through the failed state operation, not fatal cleanup.
+    }
+  }
+}
+
 function saveHookState(path: string, state: HookState) {
   mkdirSync(resolve(path, ".."), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   renameSync(tmp, path);
+}
+
+function delay(milliseconds: number) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+function isNodeError(error: unknown, code: string) {
+  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === code;
 }
 
 function renderSessionStartContext(
@@ -797,7 +948,7 @@ function renderSessionStartContext(
   maxPointers: number,
   dedupeWindowMs: number,
 ) {
-  const activeArtifacts = collectArtifactRecords(repo, ".agent-crystals").filter((record) => record.supersededBy.length === 0);
+  const activeArtifacts = collectArtifactRecords(repo, ".agent-crystals").filter(isValidActiveArtifact);
   const sessions = activeArtifacts.filter((record) => record.kind === "session").slice(0, maxPointers);
   const checkpoints = activeArtifacts.filter((record) => record.kind === "checkpoint").slice(0, maxPointers);
   const lines = [
@@ -864,6 +1015,27 @@ function stableKey(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
+function resolveRepoRoot(candidate: string) {
+  const resolved = resolve(candidate);
+  return git(resolved, ["rev-parse", "--show-toplevel"]) ?? resolved;
+}
+
+function reserveExclusiveArtifactPath(outDir: string, filename: string) {
+  const extension = filename.endsWith(".md") ? ".md" : "";
+  const stem = extension ? filename.slice(0, -extension.length) : filename;
+  for (let suffix = 1; suffix <= 10_000; suffix += 1) {
+    const candidate = resolve(outDir, suffix === 1 ? filename : `${stem}-${suffix}${extension}`);
+    try {
+      const fd = openSync(candidate, "wx");
+      closeSync(fd);
+      return candidate;
+    } catch (error) {
+      if (!isNodeError(error, "EEXIST")) throw error;
+    }
+  }
+  throw new Error(`Unable to reserve a unique artifact path for ${filename}.`);
+}
+
 function normalizeForHash(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -878,6 +1050,10 @@ function redactSensitiveText(value: string) {
     .replace(/\b(npm_[A-Za-z0-9]{20,})\b/g, "[REDACTED_NPM_TOKEN]")
     .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, "[REDACTED_API_KEY]")
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/gi, "$1[REDACTED]")
+    .replace(
+      /\b([A-Za-z][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_?KEY)[A-Za-z0-9_]*)\s*[:=]\s*["']?[^"'\s,;]{4,}/gi,
+      "$1=[REDACTED]",
+    )
     .replace(/\b(authorization|api[_-]?key|token|secret|password|cookie)\b\s*[:=]\s*["']?[^"'\s,;]{8,}/gi, "$1=[REDACTED]")
     .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, "[REDACTED_JWT]");
 }
@@ -917,7 +1093,11 @@ function ensureDirectory(path: string, dryRun: boolean): FileAction {
   return { path, action: "created", detail: "directory" };
 }
 
-function writeIfChanged(path: string, content: string, options: { dryRun: boolean; force: boolean }): FileAction {
+function writeIfChanged(
+  path: string,
+  content: string,
+  options: { dryRun: boolean; force: boolean; backupOnReplace?: boolean },
+): FileAction {
   const exists = existsSync(path);
   if (exists) {
     const current = readFileSync(path, "utf8");
@@ -932,11 +1112,31 @@ function writeIfChanged(path: string, content: string, options: { dryRun: boolea
   }
   if (options.dryRun) return { path, action: exists ? "would_update" : "would_create" };
   mkdirSync(dirname(path), { recursive: true });
+  const backupPath = exists && options.backupOnReplace ? writeUpgradeBackup(path, readFileSync(path, "utf8")) : undefined;
   writeFileSync(path, content, "utf8");
-  return { path, action: exists ? "updated" : "created" };
+  return { path, action: exists ? "updated" : "created", detail: backupPath ? `previous file preserved at ${backupPath}` : undefined };
 }
 
-function installSkill(targetDir: string, options: { dryRun: boolean; force: boolean }): FileAction[] {
+function writeUpgradeBackup(path: string, content: string) {
+  const timestamp = compactTimestamp(new Date());
+  for (let suffix = 1; suffix <= 10_000; suffix += 1) {
+    const candidate = `${path}.pre-agent-crystallize-upgrade-${timestamp}${suffix === 1 ? "" : `-${suffix}`}.bak`;
+    try {
+      const fd = openSync(candidate, "wx");
+      writeFileSync(fd, content, "utf8");
+      closeSync(fd);
+      return candidate;
+    } catch (error) {
+      if (!isNodeError(error, "EEXIST")) throw error;
+    }
+  }
+  throw new Error(`Unable to preserve an upgrade backup for ${path}.`);
+}
+
+function installSkill(
+  targetDir: string,
+  options: { dryRun: boolean; force: boolean; backupOnReplace?: boolean },
+): FileAction[] {
   const sourceDir = resolve(packageRoot(), "skills", "agent-context-crystallizer");
   const files = [
     ["SKILL.md", "SKILL.md"],
@@ -956,8 +1156,61 @@ function installSkill(targetDir: string, options: { dryRun: boolean; force: bool
   });
 }
 
+function checkGeneratedFile(name: string, path: string, expected: string) {
+  if (!existsSync(path)) return { name, path, required: false, status: "missing_optional" };
+  const current = readFileSync(path, "utf8");
+  const canonicalSkill = "~/.agents/skills/agent-context-crystallizer/SKILL.md";
+  const pointer = path.endsWith("SKILL.md") && current.includes(canonicalSkill);
+  const targetExists = pointer && existsSync(resolve(homedir(), ".agents", "skills", "agent-context-crystallizer", "SKILL.md"));
+  const generated = /^Distribution: agent-crystallize\//m.test(current) ||
+    current.startsWith("---\nname: agent-context-crystallizer\n") && current.includes("## Resolve The CLI Before Writing");
+  const status = current === expected ? "ok" : pointer
+    ? targetExists ? "custom_pointer" : "broken_pointer"
+    : generated ? "outdated_or_modified" : "custom_or_unrecognized";
+  return {
+    name,
+    path,
+    required: false,
+    status,
+    detail: status === "ok" ? undefined : status === "outdated_or_modified"
+      ? "Recognizable package template differs; review custom edits before setup --upgrade."
+      : status === "broken_pointer" ? "Canonical skill target is missing; repair the pointer before relying on it."
+      : "Custom or unrecognized configuration; preserve it and review manually. Template difference alone does not establish an available upgrade.",
+  };
+}
+
+function checkInstalledSkill(name: string, targetDir: string) {
+  const sourceDir = resolve(packageRoot(), "skills", "agent-context-crystallizer");
+  return [
+    ["SKILL.md", "SKILL.md"],
+    [join("agents", "openai.yaml"), join("agents", "openai.yaml")],
+  ].map(([sourceRelative, targetRelative]) => {
+    const source = resolve(sourceDir, sourceRelative);
+    const target = resolve(targetDir, targetRelative);
+    return checkGeneratedFile(`${name}:${targetRelative.replace(/\\/g, "/")}`, target, readFileSync(source, "utf8"));
+  });
+}
+
 function packageRoot() {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+function packageVersion() {
+  const parsed = JSON.parse(readFileSync(resolve(packageRoot(), "package.json"), "utf8")) as { version?: unknown };
+  return typeof parsed.version === "string" ? parsed.version : "unknown";
+}
+
+function installedSource(): "registry" | "local" | "unknown" {
+  if (existsSync(resolve(packageRoot(), ".git"))) return "local";
+  try {
+    const lock = JSON.parse(readFileSync(resolve(packageRoot(), "../../..", "package-lock.json"), "utf8"));
+    const resolved = lock.packages?.["node_modules/@stewie-sh/agent-crystallize"]?.resolved;
+    if (typeof resolved === "string") {
+      if (resolved.startsWith("https://registry.npmjs.org/")) return "registry";
+      return "local";
+    }
+  } catch { /* Install provenance is not always available. */ }
+  return "unknown";
 }
 
 function upsertManagedBlock(path: string, block: string, options: { dryRun: boolean; heading: string }): FileAction {
@@ -1029,21 +1282,28 @@ function upsertRepoConfig(repo: string, project: string, artifactProfile: Artifa
   return { path, action: existed ? "updated" : "created" };
 }
 
-function renderArtifactProfileExclude(artifactProfile: ArtifactProfile) {
+function renderArtifactProfileExclude(artifactProfile: ArtifactProfile, retainLegacyBroadProtections = false) {
   const artifactPatterns =
     artifactProfile === "local-private"
       ? [".agent-crystals/"]
-      : [".agent-crystals/checkpoints/", ".agent-crystals/manifest.json", ".agent-crystals/config.json"];
+      : [".agent-crystals/checkpoints/", ".agent-crystals/annotations/", ".agent-crystals/manifest.json", ".agent-crystals/config.json"];
+  const legacyPatterns = retainLegacyBroadProtections
+    ? [
+        "",
+        "# retained legacy protections; review before removing with init --migrate-excludes",
+        ".local/",
+        ".private/",
+        "private/",
+        "docs/private/",
+        "docs/internal/",
+        "*.private.md",
+        "*.internal.md",
+      ]
+    : [];
   return `${artifactProfileExcludeStart}
 # profile: ${artifactProfile}
 ${artifactPatterns.join("\n")}
-.local/
-.private/
-private/
-docs/private/
-docs/internal/
-*.private.md
-*.internal.md
+${legacyPatterns.join("\n")}
 ${artifactProfileExcludeEnd}
 `;
 }
@@ -1063,7 +1323,7 @@ function replaceArtifactProfileExclude(current: string, block: string) {
   return replaced ? next : `${current.replace(/\s*$/u, "\n")}\n${block}`;
 }
 
-function upsertLocalExclude(repo: string, artifactProfile: ArtifactProfile, dryRun: boolean): FileAction {
+function upsertLocalExclude(repo: string, artifactProfile: ArtifactProfile, dryRun: boolean, migrateExcludes = false): FileAction {
   const path = resolveGitExcludePath(repo);
   if (!path) {
     return {
@@ -1073,14 +1333,23 @@ function upsertLocalExclude(repo: string, artifactProfile: ArtifactProfile, dryR
     };
   }
   const existed = existsSync(path);
-  const block = renderArtifactProfileExclude(artifactProfile);
   const current = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const currentManagedBlock = findArtifactProfileExclude(current);
+  const retainLegacyBroadProtections = !migrateExcludes && hasLegacyBroadProtections(currentManagedBlock);
+  const block = renderArtifactProfileExclude(artifactProfile, retainLegacyBroadProtections);
   const next = replaceArtifactProfileExclude(current, block);
-  if (current === next) return { path, action: "unchanged" };
-  if (dryRun) return { path, action: existed ? "would_update" : "would_create" };
+  const detail = retainLegacyBroadProtections
+    ? "legacy broad protections retained; review before rerunning init --migrate-excludes"
+    : undefined;
+  if (current === next) return { path, action: "unchanged", detail };
+  if (dryRun) return { path, action: existed ? "would_update" : "would_create", detail };
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, next, "utf8");
-  return { path, action: existed ? "updated" : "created" };
+  return { path, action: existed ? "updated" : "created", detail };
+}
+
+function hasLegacyBroadProtections(block: string | undefined) {
+  return Boolean(block && /^(?:\.local\/|\.private\/|private\/|docs\/private\/|docs\/internal\/|\*\.private\.md|\*\.internal\.md)$/m.test(block));
 }
 
 function checkPath(name: string, path: string, required: boolean) {
@@ -1125,12 +1394,22 @@ function checkLocalExclude(repo: string, artifactProfile: ArtifactProfile) {
   const body = existsSync(path) ? readFileSync(path, "utf8") : "";
   const managedBlock = findArtifactProfileExclude(body);
   const expectedBlock = renderArtifactProfileExclude(artifactProfile);
+  const retainedLegacy = hasLegacyBroadProtections(managedBlock);
   return {
     name: "repo:git-info-exclude",
     path,
     required: false,
-    status: managedBlock === expectedBlock ? "ok" : managedBlock ? "profile_mismatch" : "missing_optional",
-    detail: `artifactProfile=${artifactProfile}`,
+    status:
+      managedBlock === expectedBlock
+        ? "ok"
+        : retainedLegacy
+          ? "legacy_protections_retained"
+          : managedBlock
+            ? "profile_mismatch"
+            : "missing_optional",
+    detail: retainedLegacy
+      ? `artifactProfile=${artifactProfile}; broad legacy protections retained until explicit init --migrate-excludes`
+      : `artifactProfile=${artifactProfile}`,
   };
 }
 
@@ -1142,11 +1421,15 @@ function resolveGitExcludePath(repo: string) {
 
 function checkManagedPointer(name: string, path: string) {
   const body = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const customPointer = body.includes("~/.agents/context-persistence-protocol.md");
+  const customTargetExists = existsSync(resolve(homedir(), ".agents", "context-persistence-protocol.md"));
   return {
     name,
     path,
     required: false,
-    status: body.includes(managedStart) && body.includes("agent-crystallize") ? "ok" : existsSync(path) ? "missing_pointer" : "missing_optional",
+    status: body.includes(managedStart) && body.includes("agent-crystallize") ? "ok"
+      : customPointer ? customTargetExists ? "custom_pointer" : "broken_pointer"
+      : existsSync(path) ? "missing_pointer" : "missing_optional",
   };
 }
 
@@ -1200,6 +1483,7 @@ function renderProtocolFile() {
   return `# Context Persistence Protocol
 
 Protocol: agent-context-crystallization/0.1
+Distribution: agent-crystallize/${packageVersion()}
 
 This file is a thin user-level pointer for local-first agent context persistence.
 
@@ -1208,6 +1492,8 @@ This file is a thin user-level pointer for local-first agent context persistence
 - Preserve durable work context, not hidden chain-of-thought.
 - Use checkpoints as lightweight save-points during long-running agent work.
 - Use fuller session crystals before handoff, compaction, or session end.
+- Use bounded local recall before resuming or acting on related work; inspect source artifacts before treating matches as truth.
+- At session start or first use, run \`agent-crystallize doctor --updates\` when supported. If updates.shouldNotify is true, review install provenance and ask the user before upgrading. This optional npm check is cached; never block urgent capture on it.
 - Prefer provenance pointers over copying large raw transcripts.
 - Keep private/local artifacts out of public repos unless they are intentionally sanitized.
 - Treat external memory systems as optional index/storage layers. The local artifact stays portable.
@@ -1218,6 +1504,7 @@ This file is a thin user-level pointer for local-first agent context persistence
 agent-crystallize init
 agent-crystallize checkpoint --body "Current state, decision, open loop, next action."
 agent-crystallize now --from-checkpoints latest --body "Ready to hand off."
+agent-crystallize recall "current task" --trace
 agent-crystallize validate
 agent-crystallize manifest --write
 agent-crystallize doctor
@@ -1236,6 +1523,7 @@ function renderHarnessPointer(harnessName: string) {
 - Follow \`~/.agents/context-persistence-protocol.md\` when available.
 - Use \`agent-crystallize checkpoint\` after high-signal work, decisions, failed tests, reality checks, or before handoff/compaction.
 - Use \`agent-crystallize now --from-checkpoints latest\` for fuller session crystals.
+- Use bounded \`agent-crystallize recall "<current task>"\` when prior repo context may change the next action.
 - Generated crystals are work context and evidence, not hidden chain-of-thought.
 - Keep private/local artifacts out of public repos unless intentionally sanitized.
 - If hooks are configured or continuity feels broken, run \`agent-crystallize doctor --hooks\` and verify the host \`/hooks\` view. Codex may skip new or changed hooks until trusted.
@@ -1251,6 +1539,7 @@ function renderRepoPointer(project: string) {
 - If hooks are configured or continuity still feels broken, run \`agent-crystallize doctor --hooks\` and verify the host \`/hooks\` view.
 - Use \`agent-crystallize checkpoint --project ${project} --body "<state, decision, open loop, next action>"\` during long work.
 - Use \`agent-crystallize now --from-checkpoints latest --project ${project} --body "<handoff>"\` before handoff or compaction.
+- Use \`agent-crystallize recall "<current task>"\` when resuming or when prior repo context may change the action.
 - Treat generated crystals as local/private by default. Commit only sanitized examples or intentionally reviewed artifacts.`;
 }
 
@@ -1259,7 +1548,7 @@ function escapeRegex(value: string) {
 }
 
 function validate(rest: string[]) {
-  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
   const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
   const explicitFiles = takeRepeatedFlag(rest, "--files");
   const failOnWarnings = takeBooleanFlag(rest, "--fail-on-warnings");
@@ -1294,8 +1583,198 @@ function validate(rest: string[]) {
   };
 }
 
+function annotate(rest: string[], expected?: Map<string, string>) {
+  const copy = [...rest];
+  const repo = resolveRepoRoot(takeFlag(copy, "--repo") ?? process.cwd());
+  return withLifecycleLock(repo, () => annotateLocked(rest, expected));
+}
+
+function annotateLocked(rest: string[], expected?: Map<string, string>) {
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
+  const paths = takeRepeatedFlag(rest, "--artifact");
+  const action = takeFlag(rest, "--action") as Action;
+  const reason = takeFlag(rest, "--reason")?.trim();
+  const source = takeFlag(rest, "--source-ref")?.trim();
+  const target = takeFlag(rest, "--target");
+  if (rest.length || !paths.length || !actions.includes(action) || !reason || !source) {
+    throw new Error("annotate requires --artifact, --action, --reason and --source-ref; unknown arguments are rejected.");
+  }
+  const records = collectArtifactRecords(repo, ".agent-crystals");
+  const lookup = (path: string) => records.find(record => record.path === relative(repo, resolve(repo, path)));
+  const selected = paths.map(path => lookup(path));
+  if (selected.some(record => !record || !isValidArtifact(record))) throw new Error("Every artifact must be an existing valid local crystal/checkpoint.");
+  if ((action === "consolidated" || action === "superseded") && selected.some(record => !isValidActiveArtifact(record!))) {
+    throw new Error("Sources changed lifecycle state; re-read before consolidation or supersession.");
+  }
+  if (expected && selected.some(record => expected.get(record!.path) !== fingerprint(repo, record!.path))) {
+    throw new Error("Source content changed while synthesizing; review before consolidation.");
+  }
+  const destination = target ? lookup(target) : undefined;
+  if (action !== "archive" && action !== "restore" && !destination) throw new Error("This relation requires --target.");
+  if (destination && (!isValidActiveArtifact(destination) || selected.some(record => record!.path === destination.path))) {
+    throw new Error("Target must be valid, active, and distinct from sources.");
+  }
+  if (target && !destination) throw new Error("Target was not found.");
+  if (destination && selected.some(record => record!.project !== destination.project || record!.scope !== destination.scope)) {
+    throw new Error("Annotation source and target must share project and scope.");
+  }
+  upsertLocalExclude(repo, resolveArtifactProfile(repo), false, false);
+  const result = writeAnnotation(repo, [...new Set(selected.map(record => record!.path))], action, reason, source, destination?.path);
+  return { ok: true, ...result, manifest: manifest(["--repo", repo, "--write"]) };
+}
+
+async function currentState(rest: string[]) {
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
+  const paths = takeRepeatedFlag(rest, "--artifact");
+  const topic = takeFlag(rest, "--topic")?.trim();
+  const body = takeFlag(rest, "--body")?.trim();
+  const reason = takeFlag(rest, "--reason")?.trim();
+  const source = takeFlag(rest, "--source-ref")?.trim();
+  if (rest.length || !paths.length || !topic || !body || !reason || !source) {
+    throw new Error("current-state requires explicit --artifact sources, --topic, --body synthesis, --reason and --source-ref.");
+  }
+  const records = collectArtifactRecords(repo, ".agent-crystals");
+  const selected = paths.map(path => records.find(record => record.path === relative(repo, resolve(repo, path))));
+  if (selected.some(record => !record || !isValidActiveArtifact(record))) throw new Error("Rollup sources must be valid and active.");
+  if (new Set(selected.map(record => `${record!.project}:${record!.scope}`)).size !== 1) throw new Error("Rollup sources must share project and scope.");
+  const refs = [...new Set(selected.map(record => record!.path))];
+  const expected = new Map(refs.map(path => [path, fingerprint(repo, path)]));
+  const result = await crystallize([
+    "--repo", repo, "--project", selected[0]!.project!, "--scope", selected[0]!.scope!,
+    "--title", `Current state - ${topic}`, "--topic", topic, "--body", body,
+    "--source-ref", source, "--finding", reason,
+    ...refs.flatMap(path => ["--relation", `derived_from:${path}`]),
+    "--open-loop", "Verify this synthesis against its sources and live state before consequential action.",
+  ], "crystal") as { relativePath: string };
+  try {
+    const annotation = annotate(["--repo", repo, ...refs.flatMap(path => ["--artifact", path]),
+      "--action", "consolidated", "--target", result.relativePath, "--reason", reason, "--source-ref", source], expected);
+    return { ok: true, currentState: result, annotation };
+  } catch (error) {
+    throw new Error(`Current-state artifact retained at ${result.relativePath}; consolidation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function recall(rest: string[]) {
+  const includeInactive = takeBooleanFlag(rest, "--include-inactive");
+  const includeWeak = takeBooleanFlag(rest, "--include-weak");
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
+  const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
+  const explicitQuery = takeFlag(rest, "--query");
+  const topics = takeRepeatedFlag(rest, "--topic").map((value) => value.toLowerCase());
+  const files = takeRepeatedFlag(rest, "--file").map((value) => value.toLowerCase());
+  const sessionId = takeFlag(rest, "--session-id")?.toLowerCase();
+  const sinceValue = takeFlag(rest, "--since");
+  const limit = Number(takeFlag(rest, "--limit") ?? 5);
+  const includeInvalid = takeBooleanFlag(rest, "--include-invalid");
+  const includeSuperseded = takeBooleanFlag(rest, "--include-superseded");
+  const trace = takeBooleanFlag(rest, "--trace");
+  const query = (explicitQuery ?? rest.filter((value) => !value.startsWith("--")).join(" ")).trim();
+  for (let index = rest.length - 1; index >= 0; index -= 1) {
+    if (!rest[index].startsWith("--")) rest.splice(index, 1);
+  }
+  if (rest.length > 0) throw new Error(`Unexpected recall arguments: ${rest.join(" ")}`);
+  if (!query && topics.length === 0 && files.length === 0 && !sessionId && !sinceValue) {
+    throw new Error("recall requires a query or at least one --topic, --file, --session-id, or --since filter.");
+  }
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error("--limit must be an integer from 1 to 20.");
+  const since = sinceValue ? Date.parse(sinceValue) : undefined;
+  if (sinceValue && !Number.isFinite(since)) throw new Error(`Invalid --since value: ${sinceValue}`);
+
+  const allRecords = collectArtifactRecords(repo, crystalsDir);
+  const candidates = allRecords.filter((record) => {
+    if (!includeInvalid && !isValidArtifact(record)) return false;
+    if (!includeSuperseded && record.supersededBy.length > 0) return false;
+    if (!includeInactive && (record.archived || record.consolidatedInto.length > 0)) return false;
+    if (since !== undefined && Date.parse(record.observedAt ?? record.mtime) < since) return false;
+    return true;
+  });
+  const queryTerms = tokenizeQuery(query);
+  const documents = candidates.map(record => {
+    const body = readFileSync(resolve(repo, record.path), "utf8").toLowerCase();
+    return { record, body, tokens: new Set(tokenizeQuery(body)) };
+  });
+  const termWeights = new Map(queryTerms.map(term => {
+    const count = documents.filter(doc => doc.tokens.has(term)).length;
+    return [term, Math.log(1 + (documents.length + 1) / (count + 1))];
+  }));
+  const maxWeight = Math.max(0, ...termWeights.values());
+  let weakCount = 0;
+  const results: RecallResult[] = [];
+  for (const { record, body: lowerMarkdown, tokens } of documents) {
+    if (topics.length > 0 && !topics.every((topic) => record.topics.some((value) => value.toLowerCase().includes(topic)))) continue;
+    if (files.length > 0 && !files.every((file) => lowerMarkdown.includes(file))) continue;
+    if (sessionId && !lowerMarkdown.includes(sessionId)) continue;
+
+    const matched: string[] = [];
+    let score = 0;
+    let matchedTerms = 0;
+    let distinctiveMatch = false;
+    const fields: Array<[string, string, number]> = [
+      ["title", record.title.toLowerCase(), 6],
+      ["topic", record.topics.join(" ").toLowerCase(), 5],
+      ["focus", record.currentFocus.toLowerCase(), 4],
+      ["path", record.path.toLowerCase(), 3],
+      ["body", lowerMarkdown, 1],
+    ];
+    for (const term of queryTerms) {
+      if (!tokens.has(term)) continue;
+      matchedTerms++;
+      const rarity = termWeights.get(term)!;
+      if (rarity >= maxWeight * 0.65) distinctiveMatch = true;
+      for (const [field, value, weight] of fields) {
+        if (!tokenizeQuery(value).includes(term)) continue;
+        score += weight * rarity;
+        matched.push(`${field}:${term}`);
+        break;
+      }
+    }
+    if (query && lowerMarkdown.includes(query.toLowerCase())) {
+      score += 8;
+      matched.push("exact-phrase");
+    }
+    if (!query || score > 0) {
+      const weak = queryTerms.length > 0 &&
+        (!distinctiveMatch || matchedTerms < Math.ceil(queryTerms.length / 2));
+      if (weak) {
+        weakCount++;
+        if (!includeWeak) continue;
+      }
+      if (queryTerms.length) score *= matchedTerms / queryTerms.length;
+      score += topics.length * 5 + files.length * 3 + (sessionId ? 3 : 0);
+      results.push({
+        path: record.path,
+        kind: record.kind,
+        title: record.title,
+        observedAt: record.observedAt,
+        score,
+        matched: [...new Set(matched)],
+        snippet: excerpt(record.currentFocus, 240),
+      });
+    }
+  }
+  results.sort((a, b) => b.score - a.score || (b.observedAt ?? "").localeCompare(a.observedAt ?? "") || a.path.localeCompare(b.path));
+  return {
+    ok: true,
+    repo,
+    crystalsDir,
+    query: query || undefined,
+    filters: { topics, files, sessionId, since: sinceValue, includeInvalid, includeSuperseded, includeWeak, includeInactive },
+    resultCount: Math.min(results.length, limit),
+    results: results.slice(0, limit),
+    trace: trace
+      ? { artifactCount: allRecords.length, candidateCount: candidates.length, matchedCount: results.length, weakCount,
+          termWeights: Object.fromEntries(termWeights), broadenHint: "Use --include-weak to inspect partial matches." }
+      : undefined,
+  };
+}
+
+function tokenizeQuery(query: string) {
+  return [...new Set((query.normalize("NFC").toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}._/-]*/gu) ?? []).map(term => term.replace(/[.]+$/, "")))].filter((term) => term.length >= 2);
+}
+
 function manifest(rest: string[]) {
-  const repo = resolve(takeFlag(rest, "--repo") ?? process.cwd());
+  const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
   const crystalsDir = takeFlag(rest, "--crystals-dir") ?? ".agent-crystals";
   const includeSuperseded = takeBooleanFlag(rest, "--include-superseded");
   const write = takeBooleanFlag(rest, "--write");
@@ -1306,16 +1785,23 @@ function manifest(rest: string[]) {
 
   const generatedAt = new Date().toISOString();
   const records = collectArtifactRecords(repo, crystalsDir);
-  const activeArtifacts = records.filter((record) => record.supersededBy.length === 0);
+  const validArtifacts = records.filter(isValidArtifact);
+  const invalidArtifacts = records.filter((record) => !isValidArtifact(record));
+  const activeArtifacts = records.filter(isValidActiveArtifact);
   const supersededArtifacts = records.filter((record) => record.supersededBy.length > 0);
   const output = {
     generatedAt,
     repo,
     crystalsDir,
     artifactCount: records.length,
+    validCount: validArtifacts.length,
+    invalidCount: invalidArtifacts.length,
     activeCount: activeArtifacts.length,
     supersededCount: supersededArtifacts.length,
     activeArtifacts,
+    inactiveArtifacts: records.filter(record => record.archived || record.consolidatedInto.length > 0),
+    lifecycleIssues: [...new Set(records.flatMap(record => record.lifecycleIssues))],
+    invalidArtifacts,
     supersededArtifacts: includeSuperseded ? supersededArtifacts : undefined,
   };
 
@@ -1334,15 +1820,24 @@ function collectArtifactRecords(repo: string, crystalsDir: string): ArtifactReco
   const records = files.map((absolutePath) => artifactRecordFromFile(repo, absolutePath));
   const supersededBy = new Map<string, string[]>();
   const pathAliases = new Map<string, string>();
+  const basenameCounts = new Map<string, number>();
   for (const record of records) {
-    pathAliases.set(record.path, record.path);
-    pathAliases.set(`./${record.path}`, record.path);
-    pathAliases.set(basename(record.path), record.path);
+    const normalizedPath = record.path.replace(/\\/g, "/");
+    pathAliases.set(normalizedPath, record.path);
+    pathAliases.set(`./${normalizedPath}`, record.path);
+    const name = basename(normalizedPath);
+    basenameCounts.set(name, (basenameCounts.get(name) ?? 0) + 1);
   }
   for (const record of records) {
+    const name = basename(record.path.replace(/\\/g, "/"));
+    if (basenameCounts.get(name) === 1) pathAliases.set(name, record.path);
+  }
+  for (const record of records) {
+    if (!isValidArtifact(record)) continue;
     for (const relation of record.relations) {
       if (relation.type !== "supersedes") continue;
-      const target = pathAliases.get(relation.target) ?? pathAliases.get(relation.target.replace(/^\.\//, ""));
+      const normalizedTarget = relation.target.replace(/\\/g, "/");
+      const target = pathAliases.get(normalizedTarget) ?? pathAliases.get(normalizedTarget.replace(/^\.\//, ""));
       if (!target) continue;
       const superseders = supersededBy.get(target) ?? [];
       superseders.push(record.path);
@@ -1352,10 +1847,20 @@ function collectArtifactRecords(repo: string, crystalsDir: string): ArtifactReco
   for (const record of records) {
     record.supersededBy = supersededBy.get(record.path) ?? [];
   }
+  const lifecycleIssues = applyAnnotations(repo, records);
+  for (const record of records) record.lifecycleIssues = lifecycleIssues;
   return records.sort((a, b) => {
     const byObserved = (b.observedAt ?? b.mtime).localeCompare(a.observedAt ?? a.mtime);
     return byObserved || a.path.localeCompare(b.path);
   });
+}
+
+function isValidArtifact(record: ArtifactRecord) {
+  return record.validation.errors.length === 0;
+}
+
+function isValidActiveArtifact(record: ArtifactRecord) {
+  return isValidArtifact(record) && record.supersededBy.length === 0 && !record.archived && record.consolidatedInto.length === 0;
 }
 
 function artifactRecordFromFile(repo: string, absolutePath: string): ArtifactRecord {
@@ -1378,6 +1883,10 @@ function artifactRecordFromFile(repo: string, absolutePath: string): ArtifactRec
       warnings: validation.warnings,
     },
     supersededBy: [],
+    archived: false,
+    consolidatedInto: [],
+    annotations: [],
+    lifecycleIssues: [],
   };
 }
 
@@ -1529,14 +2038,28 @@ interface ProvenancePair {
 function collectGitContext(repo: string): GitContext {
   const root = git(repo, ["rev-parse", "--show-toplevel"]);
   if (!root) return { error: "not a git repository or git unavailable" };
+  const changedFiles = git(repo, ["diff", "--name-only", "HEAD"]) ?? mergeUniqueLines(
+    git(repo, ["diff", "--name-only"]) ?? "",
+    git(repo, ["diff", "--cached", "--name-only"]) ?? "",
+  );
   return {
     root,
     commit: git(repo, ["rev-parse", "--short", "HEAD"]),
     branch: git(repo, ["branch", "--show-current"]),
-    statusShort: git(repo, ["status", "--short"]) ?? "",
-    diffStat: git(repo, ["diff", "--stat"]) ?? "",
-    changedFiles: git(repo, ["diff", "--name-only"]) ?? "",
+    statusShort: boundLines(git(repo, ["status", "--short"]) ?? "", 200),
+    diffStat: boundLines(git(repo, ["diff", "HEAD", "--stat"]) ?? "", 200),
+    changedFiles: boundLines(changedFiles, 200),
   };
+}
+
+function mergeUniqueLines(...values: string[]) {
+  return [...new Set(values.flatMap((value) => value.split(/\r?\n/)).map((line) => line.trim()).filter(Boolean))].join("\n");
+}
+
+function boundLines(value: string, maxLines: number) {
+  const lines = value.split(/\r?\n/).filter(Boolean);
+  if (lines.length <= maxLines) return lines.join("\n");
+  return [...lines.slice(0, maxLines), `... [${lines.length - maxLines} more lines omitted]`].join("\n");
 }
 
 function git(repo: string, gitArgs: string[]) {
@@ -1556,27 +2079,15 @@ function collectCheckpointTrail(repo: string, checkpointDir: string): Checkpoint
   const absoluteDir = resolve(repo, checkpointDir);
   if (!existsSync(absoluteDir)) return [];
 
-  return readdirSync(absoluteDir)
-    .filter((entry) => entry.endsWith(".md"))
-    .map((entry) => {
-      const absolutePath = resolve(absoluteDir, entry);
-      return {
-        absolutePath,
-        relativePath: relative(repo, absolutePath),
-        mtimeMs: statSync(absolutePath).mtimeMs,
-      };
-    })
-    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.relativePath.localeCompare(a.relativePath))
+  return collectArtifactRecords(repo, checkpointDir === ".agent-crystals/checkpoints" ? ".agent-crystals" : checkpointDir)
+    .filter((record) => record.kind === "checkpoint" && isValidActiveArtifact(record))
     .slice(0, 5)
-    .map(({ absolutePath, relativePath }) => {
-      const markdown = readFileSync(absolutePath, "utf8");
-      return {
-        path: relativePath,
-        title: extractTitle(markdown) ?? basename(relativePath),
-        observedAt: extractHeaderValue(markdown, "Observed at"),
-        focus: excerpt(extractSection(markdown, "Current Focus") ?? "", 500),
-      };
-    });
+    .map((record) => ({
+      path: record.path,
+      title: record.title,
+      observedAt: record.observedAt,
+      focus: record.currentFocus,
+    }));
 }
 
 function extractTitle(markdown: string) {
@@ -1761,7 +2272,7 @@ ${input.git.statusShort || "(clean or unavailable)"}
 ### Diff Stat
 
 \`\`\`text
-${input.git.diffStat || "(no unstaged diff or unavailable)"}
+${input.git.diffStat || "(no tracked diff from HEAD or unavailable)"}
 \`\`\`
 
 ### Changed Files
@@ -2124,11 +2635,15 @@ Commands:
   agent-crystallize checkpoint [options] [summary]
   agent-crystallize validate [options]
   agent-crystallize manifest [options]
+  agent-crystallize recall [options] <query>
+  agent-crystallize annotate --artifact <path> --action <archive|restore|consolidated|superseded|corrects|follows-up|relates-to> --reason <text> --source-ref <ref> [--target <path>]
+  agent-crystallize current-state --artifact <path> [--artifact <path>] --topic <topic> --body <synthesis> --reason <text> --source-ref <ref>
   agent-crystallize hook [options]
 
 Setup options:
   --dry-run                 Show planned setup actions without writing
   --force                   Replace existing protocol file when it differs
+  --upgrade                 Update generated protocol/skills and preserve timestamped backups
   --all                     Configure all supported global harness pointers
   --codex                   Add/update ~/.codex/AGENTS.md managed pointer
   --claude                  Add/update ~/.claude/CLAUDE.md managed pointer
@@ -2143,10 +2658,12 @@ Init options:
   --dry-run                 Show planned init actions without writing
   --no-checkpoint           Do not create an activation checkpoint
   --no-agents-md            Do not create/update repo AGENTS.md pointer
+  --migrate-excludes        Remove broad legacy managed excludes after explicit review
   --hooks                   Report hook setup docs; v0 does not mutate hook config
   --mind                    Mark intent to connect an external memory layer later
 
 Doctor options:
+  --updates                 Check npm latest (2s timeout, 24h cache); suggest, never install
   --repo <path>             Repo to inspect; default cwd
   --codex                   Check ~/.codex/AGENTS.md managed pointer
   --claude                  Check ~/.claude/CLAUDE.md managed pointer
@@ -2200,6 +2717,21 @@ Manifest options:
   --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
   --include-superseded       Include superseded artifacts in JSON output
   --write                    Write .agent-crystals/manifest.json
+
+Recall options:
+  --include-inactive        Include archived and consolidated sources for recovery
+  --include-weak            Include partial matches excluded by coverage/rarity filtering
+  --repo <path>              Repo to search; default cwd (resolved to Git root)
+  --crystals-dir <path>      Crystals dir relative to repo; default .agent-crystals
+  --query <text>             Query text; positional text is also accepted
+  --topic <name>             Require a topic match; repeatable
+  --file <path>              Require an artifact-body file/path match; repeatable
+  --session-id <id>          Require a session provenance match
+  --since <date>             Only artifacts observed at/after this date
+  --limit <count>            Maximum results, 1-20; default 5
+  --include-invalid          Include schema-invalid evidence; off by default
+  --include-superseded       Include superseded artifacts; off by default
+  --trace                    Show candidate and match counts
 
 Hook options:
   --repo <path>                    Repo for local hook artifacts; default cwd or hook stdin cwd

@@ -27,6 +27,11 @@ Artifact profiles control Git visibility, not cognitive authority:
 - `reviewed-shared` excludes `checkpoints/`, `manifest.json`, and `config.json`,
   while allowing reviewed `sessions/` artifacts to be committed deliberately.
 
+Generated `reviewed-shared` artifact bodies use repo-relative root pointers
+instead of automatically embedding the author's absolute checkout path. Values
+supplied explicitly in body, provenance, and source-ref fields are not assumed
+safe; review and sanitize them before committing.
+
 In public repositories, treat this default layout as a local working area unless
 the artifacts have been intentionally sanitized. This repo keeps generated
 `.agent-crystals/` ignored and publishes safe examples under `examples/`.
@@ -34,6 +39,15 @@ the artifacts have been intentionally sanitized. This repo keeps generated
 Hook state is not stored in `.agent-crystals/` by default. `agent-crystallize
 hook` keeps dedupe/activity state under `~/.agent-crystallize/hooks` unless
 `--state-dir` is supplied.
+
+Artifact filenames are reserved with exclusive creation. Two captures that land
+in the same timestamp/slug receive deterministic numeric suffixes rather than
+silently overwriting each other.
+
+The manifest separates schema-invalid evidence from valid active artifacts.
+Only a valid artifact can supersede another artifact, and bootstrap, checkpoint
+rollup, and recall use valid active artifacts by default. Invalid files remain
+visible in `invalidArtifacts` for repair and provenance; they are not deleted.
 
 ## Sections
 
