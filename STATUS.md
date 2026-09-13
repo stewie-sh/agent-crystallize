@@ -26,9 +26,9 @@ Crystallization:
   Claude Code and manual portability for other Agent Skills-compatible
   harnesses.
 
-The next patch release is being hardened after cross-repo Codex and Claude Code
-dogfooding. No release is implied until the exact package artifact passes public
-safety review.
+Version 0.1.17 adds capture/recovery hardening, bounded lexical recall, local
+lifecycle annotations, explicit current-state rollups and opt-in update awareness.
+See CHANGELOG.md for changes and docs/lifecycle.md for recovery limitations.
 
 ## What Is Stable Enough To Review
 
@@ -62,7 +62,7 @@ safety review.
 - The hook installer/plugin story for Codex and Claude Code.
 - The best long-term installation/update flow for skills across harnesses.
 - Post-release feedback from real Codex and Claude Code hook usage.
-- Semantic recall is intentionally bounded and lexical in the local CLI;
+- Recall is currently bounded and lexical in the local CLI;
   automatic semantic injection, retention policy, and richer ranking remain
   experimental future work.
 - GitHub Actions release publishing is configured for version tags and verified

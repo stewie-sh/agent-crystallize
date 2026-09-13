@@ -50,15 +50,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          {
-            echo "Automated release from GitHub Actions."
-            echo
-            echo "Verification:"
-            echo "- npm ci"
-            echo "- npm run check"
-            echo "- npm pack --dry-run"
-            echo "- npm publish --access public --provenance"
-          } > release-notes.md
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
+          const sections = readFileSync('CHANGELOG.md', 'utf8').split(/^## /m);
+          const section = sections.find(value => value.startsWith(`${version} - `));
+          if (!section) throw new Error(`Missing changelog for ${version}`);
+          writeFileSync('release-notes.md', `## ${section.trim()}\n`);
+          NODE
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \

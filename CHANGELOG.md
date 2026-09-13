@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.17 - 2026-09-13
 
 - Serialize lifecycle writes and recheck source state/fingerprints inside the lock;
   preserve and report the crystal path if consolidation fails after creation.
