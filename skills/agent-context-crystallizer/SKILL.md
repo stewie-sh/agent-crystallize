@@ -63,6 +63,14 @@ Older CLIs may reject `--updates`; continue the task and suggest upgrading once.
 5. Add safe provenance when available: `--agent-body`, `--harness`,
    `--session-id`, `--transcript-uri`, and `--source-ref`. Never dump broad
    environment variables or secrets.
+   When a relevant local transcript section is known and CLI help advertises
+   support, add `--transcript-lines START-END` to record verified range/hash
+   metadata without source text. On resume, use `transcript-anchor` with the
+   recorded range and `--expect-sha256` before reading just that section.
+   Missing/mismatched sources require re-location and review, not silent trust.
+   Do not scan whole transcripts to fill a field or invent line numbers. Older
+   CLIs retain `--source-ref` as an explicitly unverified pointer; see
+   `docs/crystal-format.md` for limits and privacy constraints.
 6. Use `--continuity-tail` only for short recent turns where order/nuance
    matters after compaction. It is raw continuity evidence, not durable truth.
 7. Validate important artifacts before relying on them.

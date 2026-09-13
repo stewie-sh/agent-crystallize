@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkUpdates } from "./updates.js";
+import { transcriptAnchor, type TranscriptAnchor } from "./transcript.js";
 import { actions, applyAnnotations, writeAnnotation, withLifecycleLock, fingerprint, type Action } from "./lifecycle.js";
 
 const args = process.argv.slice(2);
@@ -80,6 +81,16 @@ async function run(name: string | undefined, rest: string[]) {
       return manifest(rest);
     case "recall":
       return recall(rest);
+    case "transcript-anchor": {
+      const uri = takeFlag(rest, "--transcript-uri");
+      const lines = takeFlag(rest, "--transcript-lines");
+      const expected = takeFlag(rest, "--expect-sha256");
+      if (rest.length || !lines) throw new Error("transcript-anchor requires --transcript-uri and --transcript-lines; optional --expect-sha256.");
+      if (expected && !/^[a-f0-9]{64}$/i.test(expected)) throw new Error("--expect-sha256 must be a SHA-256 hex digest.");
+      const anchor = transcriptAnchor(uri, lines);
+      if (expected && expected.toLowerCase() !== anchor.sha256) throw new Error("Transcript anchor hash mismatch; do not trust this range until re-located and reviewed.");
+      return { ok: true, ...anchor, ...(expected ? { verified: true } : {}) };
+    }
     case "annotate":
       return annotate(rest);
     case "current-state":
@@ -2025,6 +2036,7 @@ interface ProvenanceFields {
   conversationId?: string;
   taskId?: string;
   transcriptUri?: string;
+  transcriptAnchor?: TranscriptAnchor;
   model?: string;
   sourceRefs: string[];
   custom: ProvenancePair[];
@@ -2401,6 +2413,9 @@ function takeStructuredFields(values: string[], continuityTailSource: string): S
 }
 
 function takeProvenanceFields(values: string[]): ProvenanceFields {
+  const transcriptUri = takeFlag(values, "--transcript-uri");
+  const transcriptLines = takeFlag(values, "--transcript-lines");
+  const anchor = transcriptLines ? transcriptAnchor(transcriptUri, transcriptLines) : undefined;
   return {
     agentBody: takeFlag(values, "--agent-body"),
     harness: takeFlag(values, "--harness"),
@@ -2410,7 +2425,8 @@ function takeProvenanceFields(values: string[]): ProvenanceFields {
     runId: takeFlag(values, "--run-id"),
     conversationId: takeFlag(values, "--conversation-id"),
     taskId: takeFlag(values, "--task-id"),
-    transcriptUri: takeFlag(values, "--transcript-uri"),
+    transcriptUri: anchor?.uri ?? transcriptUri,
+    transcriptAnchor: anchor,
     model: takeFlag(values, "--model"),
     sourceRefs: takeRepeatedFlag(values, "--source-ref"),
     custom: parseProvenancePairs(takeRepeatedFlag(values, "--provenance")),
@@ -2581,6 +2597,11 @@ function renderSessionProvenance(provenance: ProvenanceFields, surface: string) 
   for (const [label, value] of fields) {
     if (value) rows.push(`- ${label}: ${singleLine(value)}`);
   }
+  if (provenance.transcriptAnchor) {
+    rows.push(`- Transcript lines: ${provenance.transcriptAnchor.lines}`);
+    rows.push(`- Transcript SHA-256: ${provenance.transcriptAnchor.sha256}`);
+    rows.push(`- Transcript bytes: ${provenance.transcriptAnchor.bytes}`);
+  }
   for (const sourceRef of provenance.sourceRefs) {
     rows.push(`- Source ref: ${singleLine(sourceRef)}`);
   }
@@ -2636,6 +2657,7 @@ Commands:
   agent-crystallize validate [options]
   agent-crystallize manifest [options]
   agent-crystallize recall [options] <query>
+  agent-crystallize transcript-anchor --transcript-uri <local-path> --transcript-lines <START-END> [--expect-sha256 <hash>]
   agent-crystallize annotate --artifact <path> --action <archive|restore|consolidated|superseded|corrects|follows-up|relates-to> --reason <text> --source-ref <ref> [--target <path>]
   agent-crystallize current-state --artifact <path> [--artifact <path>] --topic <topic> --body <synthesis> --reason <text> --source-ref <ref>
   agent-crystallize hook [options]
@@ -2691,6 +2713,7 @@ Crystal/checkpoint options:
   --conversation-id <id>     Conversation id from the active agent harness
   --task-id <id>             Task id from the active agent harness
   --transcript-uri <uri>     Transcript/source URI or local path pointer
+  --transcript-lines <A-B>   Verify inclusive local source lines and record their SHA-256 (no text copied)
   --source-ref <ref>         Source pointer such as file:line or transcript range; repeatable
   --model <name>             Model name if safe and useful to record
   --provenance <key=value>   Extra safe provenance field; repeatable

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in verified transcript line-range pointers with selected-byte SHA-256,
+  bounded local reads and no raw text copied into artifacts. Read-only
+  `transcript-anchor` can recheck a known range against its recorded hash.
+  Existing free-form source references remain compatible.
+
 ## 0.1.17 - 2026-09-13
 
 - Serialize lifecycle writes and recheck source state/fingerprints inside the lock;
