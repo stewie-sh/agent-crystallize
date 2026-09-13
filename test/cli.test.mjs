@@ -599,6 +599,50 @@ test("changed rollup fingerprint restores sources to default retrieval", () => {
   assert.ok(index.lifecycleIssues.length > 0);
 });
 
+test("concurrent lifecycle writers preserve events and reject conflicting supersession", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "crystal-events-concurrent-"));
+  const a = json(run(["checkpoint", "--repo", repo, "--title", "Alpha", "--body", "Alpha evidence"]));
+  const b = json(run(["checkpoint", "--repo", repo, "--title", "Beta", "--body", "Beta evidence"]));
+  const start = (args) => new Promise((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => stdout += chunk);
+    child.stderr.on('data', chunk => stderr += chunk);
+    child.on('error', reject);
+    child.on('close', status => resolvePromise({ status, stdout, stderr }));
+  });
+  const args = (source, action, target) => ['annotate', '--repo', repo, '--artifact', source,
+    '--action', action, '--reason', 'concurrency fixture', '--source-ref', 'fixture',
+    ...(target ? ['--target', target] : [])];
+  const receipts = await Promise.all(Array.from({ length: 8 }, () => start(args(a.relativePath, 'relates-to', b.relativePath))));
+  for (const receipt of receipts) json(receipt);
+  const events = readdirSync(join(repo, '.agent-crystals', 'annotations')).filter(name => name.endsWith('.json'));
+  assert.equal(events.length, 8);
+  const times = events.map(name => JSON.parse(readFileSync(join(repo, '.agent-crystals', 'annotations', name), 'utf8')).at);
+  assert.equal(new Set(times).size, 8);
+  const competing = await Promise.all([
+    start(args(a.relativePath, 'superseded', b.relativePath)),
+    start(args(b.relativePath, 'superseded', a.relativePath)),
+  ]);
+  assert.equal(competing.filter(result => result.status === 0).length, 1);
+  assert.equal(json(run(['manifest', '--repo', repo])).activeCount, 1);
+});
+
+test("failed consolidation keeps a recoverable artifact and source", () => {
+  const repo = mkdtempSync(join(tmpdir(), 'crystal-locked-rollup-'));
+  const source = json(run(['checkpoint', '--repo', repo, '--body', 'Source must survive']));
+  const dir = join(repo, '.agent-crystals', 'annotations');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, '.write.lock'), JSON.stringify({ pid: process.pid }));
+  const result = run(['current-state', '--repo', repo, '--artifact', source.relativePath,
+    '--topic', 'Recovery', '--body', 'Retained synthesis', '--reason', 'fixture', '--source-ref', 'fixture']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /artifact retained at .*consolidation failed/);
+  const index = json(run(['manifest', '--repo', repo]));
+  assert.equal(index.activeCount, 2);
+  assert.equal(index.inactiveArtifacts.length, 0);
+});
+
 test("recall suppresses generic matches with explicit broadening and Unicode support", () => {
   const repo = mkdtempSync(join(tmpdir(), "crystal-ranking-"));
   for (let i = 0; i < 5; i++) json(run(["checkpoint", "--repo", repo,

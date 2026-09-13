@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Serialize lifecycle writes and recheck source state/fingerprints inside the lock;
+  preserve and report the crystal path if consolidation fails after creation.
+
 - Add append-only local lifecycle annotations and explicit-source current-state
   synthesis. Archived/consolidated sources remain recoverable; fingerprint checks
   prevent changed rollups from silently hiding source context. See docs/lifecycle.md.

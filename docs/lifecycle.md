@@ -40,6 +40,10 @@ crystal links `derived_from` to sources, then one event marks them consolidated.
 No source body is modified. If event creation fails after crystal creation, retain
 the crystal and inspect it before retrying; source visibility is not intentionally
 changed. Concurrent writers may create competing projections: review them explicitly.
+Lifecycle writes are serialized with a bounded local lock and monotonic event
+timestamps. Sources are rechecked inside that lock. A crashed writer can leave a
+lock; timeout reports its path for owner inspection rather than deleting it blindly.
+The crystal and annotation are separate durable writes, not one transaction.
 
 ## Recovery And Compatibility
 

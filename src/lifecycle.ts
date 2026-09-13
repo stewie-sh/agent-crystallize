@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, openSync, closeSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 
 export const actions = ["archive", "restore", "consolidated", "superseded", "corrects", "follows-up", "relates-to"] as const;
@@ -14,12 +14,34 @@ export type LifecycleRecord = {
 export function fingerprint(repo: string, path: string) {
   return createHash("sha256").update(readFileSync(resolve(repo, path))).digest("hex");
 }
-export function writeAnnotation(repo: string, artifacts: string[], action: Action, reason: string, source: string, target?: string) {
-  const event: Event = { version: 1, id: randomUUID(), at: new Date().toISOString(), action, reason, source,
-    artifacts: artifacts.map(path => ({ path, hash: fingerprint(repo, path) })),
-    target: target ? { path: target, hash: fingerprint(repo, target) } : undefined };
+export function withLifecycleLock<T>(repo: string, run: () => T): T {
   const dir = resolve(repo, ".agent-crystals", "annotations");
   mkdirSync(dir, { recursive: true });
+  const lock = resolve(dir, ".write.lock");
+  const until = Date.now() + 2000;
+  let fd: number;
+  while (true) {
+    try { fd = openSync(lock, "wx"); break; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (Date.now() >= until) throw new Error(`Lifecycle writer busy: ${lock}. Inspect the owner before repairing a stale lock.`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+  try {
+    writeFileSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+    return run();
+  } finally { closeSync(fd); unlinkSync(lock); }
+}
+export function writeAnnotation(repo: string, artifacts: string[], action: Action, reason: string, source: string, target?: string) {
+  const dir = resolve(repo, ".agent-crystals", "annotations");
+  mkdirSync(dir, { recursive: true });
+  const latest = readdirSync(dir).filter(file => /^\d{4}-.*\.json$/.test(file)).sort().at(-1);
+  const previous = latest ? Date.parse(latest.slice(0, 24).replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/, "T$1:$2:$3.$4Z")) : 0;
+  const at = new Date(Math.max(Date.now(), Number.isFinite(previous) ? previous + 1 : 0)).toISOString();
+  const event: Event = { version: 1, id: randomUUID(), at, action, reason, source,
+    artifacts: artifacts.map(path => ({ path, hash: fingerprint(repo, path) })),
+    target: target ? { path: target, hash: fingerprint(repo, target) } : undefined };
   const path = resolve(dir, `${event.at.replace(/[:.]/g, "-")}-${event.id}.json`);
   writeFileSync(path, JSON.stringify(event, null, 2) + "\n", { flag: "wx", mode: 0o600 });
   return { eventId: event.id, path };

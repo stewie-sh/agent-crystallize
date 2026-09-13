@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkUpdates } from "./updates.js";
-import { actions, applyAnnotations, writeAnnotation, type Action } from "./lifecycle.js";
+import { actions, applyAnnotations, writeAnnotation, withLifecycleLock, fingerprint, type Action } from "./lifecycle.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -1583,7 +1583,13 @@ function validate(rest: string[]) {
   };
 }
 
-function annotate(rest: string[]) {
+function annotate(rest: string[], expected?: Map<string, string>) {
+  const copy = [...rest];
+  const repo = resolveRepoRoot(takeFlag(copy, "--repo") ?? process.cwd());
+  return withLifecycleLock(repo, () => annotateLocked(rest, expected));
+}
+
+function annotateLocked(rest: string[], expected?: Map<string, string>) {
   const repo = resolveRepoRoot(takeFlag(rest, "--repo") ?? process.cwd());
   const paths = takeRepeatedFlag(rest, "--artifact");
   const action = takeFlag(rest, "--action") as Action;
@@ -1597,6 +1603,12 @@ function annotate(rest: string[]) {
   const lookup = (path: string) => records.find(record => record.path === relative(repo, resolve(repo, path)));
   const selected = paths.map(path => lookup(path));
   if (selected.some(record => !record || !isValidArtifact(record))) throw new Error("Every artifact must be an existing valid local crystal/checkpoint.");
+  if ((action === "consolidated" || action === "superseded") && selected.some(record => !isValidActiveArtifact(record!))) {
+    throw new Error("Sources changed lifecycle state; re-read before consolidation or supersession.");
+  }
+  if (expected && selected.some(record => expected.get(record!.path) !== fingerprint(repo, record!.path))) {
+    throw new Error("Source content changed while synthesizing; review before consolidation.");
+  }
   const destination = target ? lookup(target) : undefined;
   if (action !== "archive" && action !== "restore" && !destination) throw new Error("This relation requires --target.");
   if (destination && (!isValidActiveArtifact(destination) || selected.some(record => record!.path === destination.path))) {
@@ -1626,6 +1638,7 @@ async function currentState(rest: string[]) {
   if (selected.some(record => !record || !isValidActiveArtifact(record))) throw new Error("Rollup sources must be valid and active.");
   if (new Set(selected.map(record => `${record!.project}:${record!.scope}`)).size !== 1) throw new Error("Rollup sources must share project and scope.");
   const refs = [...new Set(selected.map(record => record!.path))];
+  const expected = new Map(refs.map(path => [path, fingerprint(repo, path)]));
   const result = await crystallize([
     "--repo", repo, "--project", selected[0]!.project!, "--scope", selected[0]!.scope!,
     "--title", `Current state - ${topic}`, "--topic", topic, "--body", body,
@@ -1633,9 +1646,13 @@ async function currentState(rest: string[]) {
     ...refs.flatMap(path => ["--relation", `derived_from:${path}`]),
     "--open-loop", "Verify this synthesis against its sources and live state before consequential action.",
   ], "crystal") as { relativePath: string };
-  const annotation = annotate(["--repo", repo, ...refs.flatMap(path => ["--artifact", path]),
-    "--action", "consolidated", "--target", result.relativePath, "--reason", reason, "--source-ref", source]);
-  return { ok: true, currentState: result, annotation };
+  try {
+    const annotation = annotate(["--repo", repo, ...refs.flatMap(path => ["--artifact", path]),
+      "--action", "consolidated", "--target", result.relativePath, "--reason", reason, "--source-ref", source], expected);
+    return { ok: true, currentState: result, annotation };
+  } catch (error) {
+    throw new Error(`Current-state artifact retained at ${result.relativePath}; consolidation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function recall(rest: string[]) {
