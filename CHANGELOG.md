@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.18 - 2026-09-13
 
 - Add opt-in verified transcript line-range pointers with selected-byte SHA-256,
   bounded local reads and no raw text copied into artifacts. Read-only
