@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
@@ -343,7 +343,7 @@ test("init narrows new excludes but requires explicit migration for legacy broad
   writeFileSync(legacyPath, `# agent-crystallize:artifact-profile:start\n# profile: local-private\n.agent-crystals/\ndocs/private/\n*.private.md\n# agent-crystallize:artifact-profile:end\n`);
   const retained = json(run(["init", "--repo", legacy, "--no-checkpoint", "--no-agents-md"]));
   assert.match(readFileSync(legacyPath, "utf8"), /^docs\/private\/$/m);
-  assert.match(retained.actions.find((action) => action.path === legacyPath)?.detail ?? "", /legacy broad protections retained/);
+  assert.match(retained.actions.find((action) => existsSync(action.path) && realpathSync(action.path) === realpathSync(legacyPath))?.detail ?? "", /legacy broad protections retained/);
   const doctor = json(run(["doctor", "--repo", legacy]));
   assert.equal(doctor.checks.find((check) => check.name === "repo:git-info-exclude")?.status, "legacy_protections_retained");
 
@@ -444,9 +444,9 @@ test("nested cwd resolves to the Git root and captures staged files", () => {
   writeFileSync(join(repo, "staged.txt"), "staged\n");
   git(repo, ["add", "staged.txt"]);
   const checkpoint = json(run(["checkpoint", "--repo", nested, "--body", "root and staged fixture"]));
-  assert.ok(checkpoint.path.startsWith(join(repo, ".agent-crystals")));
+  assert.equal(realpathSync(dirname(dirname(checkpoint.path))), realpathSync(join(repo, ".agent-crystals")));
   const markdown = readFileSync(checkpoint.path, "utf8");
-  assert.match(markdown, new RegExp(`^- Repo: ${repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+  assert.equal(realpathSync(markdown.match(/^- Repo: (.+)$/m)[1]), realpathSync(repo));
   assert.match(markdown, /^staged\.txt$/m);
 });
 
@@ -522,8 +522,9 @@ test("invalid artifacts cannot supersede or enter bootstrap and checkpoint rollu
 
   const bootstrap = runHook(repo, stateDir, "SessionStart", { session_id: "validity-session" });
   assert.equal(bootstrap.status, 0, bootstrap.stderr || bootstrap.stdout);
-  assert.match(bootstrap.stdout, new RegExp(original.relativePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.doesNotMatch(bootstrap.stdout, /invalid\.md/);
+  const context = json(bootstrap).hookSpecificOutput.additionalContext;
+  assert.ok(context.includes(original.relativePath));
+  assert.doesNotMatch(context, /invalid\.md/);
 
   const replacement = json(run([
     "checkpoint", "--repo", repo, "--title", "Durable replacement", "--body", "replacement focus",
