@@ -343,7 +343,7 @@ test("init narrows new excludes but requires explicit migration for legacy broad
   writeFileSync(legacyPath, `# agent-crystallize:artifact-profile:start\n# profile: local-private\n.agent-crystals/\ndocs/private/\n*.private.md\n# agent-crystallize:artifact-profile:end\n`);
   const retained = json(run(["init", "--repo", legacy, "--no-checkpoint", "--no-agents-md"]));
   assert.match(readFileSync(legacyPath, "utf8"), /^docs\/private\/$/m);
-  assert.match(retained.actions.find((action) => existsSync(action.path) && realpathSync(action.path) === realpathSync(legacyPath))?.detail ?? "", /legacy broad protections retained/);
+  assert.match(retained.actions.find((action) => existsSync(action.path) && realpathSync.native(action.path) === realpathSync.native(legacyPath))?.detail ?? "", /legacy broad protections retained/);
   const doctor = json(run(["doctor", "--repo", legacy]));
   assert.equal(doctor.checks.find((check) => check.name === "repo:git-info-exclude")?.status, "legacy_protections_retained");
 
@@ -444,9 +444,9 @@ test("nested cwd resolves to the Git root and captures staged files", () => {
   writeFileSync(join(repo, "staged.txt"), "staged\n");
   git(repo, ["add", "staged.txt"]);
   const checkpoint = json(run(["checkpoint", "--repo", nested, "--body", "root and staged fixture"]));
-  assert.equal(realpathSync(dirname(dirname(checkpoint.path))), realpathSync(join(repo, ".agent-crystals")));
+  assert.equal(realpathSync.native(dirname(dirname(checkpoint.path))), realpathSync.native(join(repo, ".agent-crystals")));
   const markdown = readFileSync(checkpoint.path, "utf8");
-  assert.equal(realpathSync(markdown.match(/^- Repo: (.+)$/m)[1]), realpathSync(repo));
+  assert.equal(realpathSync.native(markdown.match(/^- Repo: (.+)$/m)[1]), realpathSync.native(repo));
   assert.match(markdown, /^staged\.txt$/m);
 });
 
